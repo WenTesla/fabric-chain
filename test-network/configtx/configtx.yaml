@@ -16,20 +16,24 @@ Organizations:
 
     # SampleOrg defines an MSP using the sampleconfig.  It should never be used
     # in production but may be used as a template for other definitions
+    # 定义一个组织引用，类似与变量，在Profile上部分被引用，&都是引用变量，使用*引用
     - &OrdererOrg
         # DefaultOrg defines the organization which is used in the sampleconfig
         # of the fabric.git development environment
+        # 组织名称
         Name: OrdererOrg
 
         # ID to load the MSP definition as
+        # 组织Id
         ID: OrdererMSP
-
+        # MSP 文件的路径
         # MSPDir is the filesystem path which contains the MSP configuration
         MSPDir: ../organizations/ordererOrganizations/example.com/msp
 
         # Policies defines the set of policies at this level of the config tree
         # For organization policies, their canonical path is usually
         #   /Channel/<Application|Orderer>/<OrgName>/<PolicyName>
+        # 策略
         Policies:
             Readers:
                 Type: Signature
@@ -40,7 +44,7 @@ Organizations:
             Admins:
                 Type: Signature
                 Rule: "OR('OrdererMSP.admin')"
-
+        # 排序节点
         OrdererEndpoints:
             - orderer.example.com:7050
 
@@ -128,6 +132,7 @@ Capabilities:
         # not able to participate in channels at v2.0 capability.
         # Prior to enabling V2.0 channel capabilities, ensure that all
         # orderers and peers on a channel are at v2.0.0 or later.
+        # 要求达到的版本
         V2_0: true
 
     # Orderer capabilities apply only to the orderers, and may be safely
@@ -162,6 +167,7 @@ Capabilities:
 #   genesis block for application related parameters
 #
 ################################################################################
+# 定义了访问策略与参与组织
 Application: &ApplicationDefaults
 
     # Organizations is the list of orgs which are defined as participants on
@@ -198,9 +204,11 @@ Application: &ApplicationDefaults
 #   genesis block for orderer related parameters
 #
 ################################################################################
+# 排序服务
 Orderer: &OrdererDefaults
 
     # Orderer Type: The orderer implementation to start
+    # 排序算法
     OrdererType: etcdraft
     
     # Addresses used to be the list of orderer addresses that clients and peers
@@ -208,13 +216,16 @@ Orderer: &OrdererDefaults
     # addresses and orderer organizations which can be useful for things such
     # as TLS validation.  The preferred way to specify orderer addresses is now
     # to include the OrdererEndpoints item in your org definition
+    # 地址
     Addresses:
         - orderer.example.com:7050
-
+    # EtcRaft 被选中的配置
     EtcdRaft:
+        # 投票节点
         Consenters:
         - Host: orderer.example.com
           Port: 7050
+          # 证书
           ClientTLSCert: ../organizations/ordererOrganizations/example.com/orderers/orderer.example.com/tls/server.crt
           ServerTLSCert: ../organizations/ordererOrganizations/example.com/orderers/orderer.example.com/tls/server.crt
 
@@ -222,6 +233,7 @@ Orderer: &OrdererDefaults
     BatchTimeout: 2s
 
     # Batch Size: Controls the number of messages batched into a block
+    # 区块单个的配置
     BatchSize:
 
         # Max Message Count: The maximum number of messages to permit in a batch
@@ -238,6 +250,7 @@ Orderer: &OrdererDefaults
 
     # Organizations is the list of orgs which are defined as participants on
     # the orderer side of the network
+    # 参与维护的组织
     Organizations:
 
     # Policies defines the set of policies at this level of the config tree
@@ -267,6 +280,7 @@ Orderer: &OrdererDefaults
 #   genesis block for channel related parameters.
 #
 ################################################################################
+# 创世块或配置
 Channel: &ChannelDefaults
     # Policies defines the set of policies at this level of the config tree
     # For Channel policies, their canonical path is
@@ -299,6 +313,9 @@ Channel: &ChannelDefaults
 #   as parameters to the configtxgen tool
 #
 ################################################################################
+# Profiles 配置用于 configtxgen 工具的配置入口，主要是引用其余五个部分的参数，其定义了一系列的配置模板，
+# 每个模板代表了特定应用场景下的自定义的通道配置，可以用来创建系统通道或应用通道。配置模板中可以包括 Application 、 Capabilities 、 Consortium 、 Consortiums 、 Policies 、 Orderer 等配置字段，
+#    根据使用目的不同，一般只包括部分字段。除了通道默认的配置，创建系统通道初始区块的模板一般需要包括 Orderer 、 Consortiums 字段信息（也可以包括 Applicaion 字段定义初始应用通道配置）：
 Profiles:
 
     TwoOrgsOrdererGenesis:

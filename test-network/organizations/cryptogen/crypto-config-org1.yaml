@@ -13,6 +13,7 @@ PeerOrgs:
   # Org1
   # ---------------------------------------------------------------------------
   - Name: Org1
+    # 域名
     Domain: org1.example.com
     # 是否使用NodeOUs(更细粒度的MSP，可以理解为一个公司的不同部门)
     EnableNodeOUs: true

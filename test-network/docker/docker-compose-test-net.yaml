@@ -13,7 +13,7 @@ volumes:
 networks:
   test:
     name: fabric_test
-
+# 服务
 services:
 
   orderer.example.com:
