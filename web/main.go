@@ -6,6 +6,7 @@ import (
 	"web/controller"
 )
 
+// 默认端口号 8080
 var port = flag.String("port", "8080", "端口号")
 
 func main() {
@@ -35,4 +36,8 @@ func loadRouter(r *gin.Engine) {
 	r.POST("/cert/register", controller.CertRegister)
 	// 验证证书数据
 	r.POST("/chain/verity", controller.VerityCertController)
+	// 签名
+	r.POST("/user/sign", controller.SignController)
+	// 验签
+	r.POST("/user/verity", controller.VerityController)
 }

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"encoding/hex"
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"io"
@@ -125,7 +126,7 @@ func Login(c *gin.Context) {
 	// 先校验参数长度
 	if len(password) > 32 || len(password) <= 5 || len(username) > 32 {
 		c.JSON(http.StatusBadRequest,
-			model.BaseResponseInstance.FailMsg("参数长度不正确"),
+			model.BaseResponseInstance.FailMsg(config.ParaLengthIsWrong),
 		)
 		return
 	}
@@ -167,5 +168,69 @@ func UpdatePassword(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, model.BaseResponseInstance.Success())
+	return
+}
+
+// 签名
+func SignController(c *gin.Context) {
+	// 单文件
+	file, err := c.FormFile("privateKey")
+	if err != nil {
+		c.JSON(http.StatusBadRequest,
+			model.BaseResponseInstance.FailMsg(config.FileUploadFalse),
+		)
+		return
+	}
+	log.Println(file.Filename)
+	// 取出数据
+	src, err := file.Open()
+	if err != nil {
+		c.JSON(http.StatusBadRequest,
+			model.BaseResponseInstance.FailMsg(config.FileParseFalse),
+		)
+		return
+	}
+	defer src.Close()
+	bytes, err := io.ReadAll(src)
+	if err != nil {
+		c.JSON(http.StatusBadRequest,
+			model.BaseResponseInstance.FailMsg(config.FileParseFalse),
+		)
+		return
+	}
+	//data := c.PostForm("data")
+	sign, err := service.SignService(service.SignValue, bytes)
+	if err != nil {
+		c.JSON(http.StatusBadRequest,
+			model.BaseResponseInstance.FailMsg(err.Error()),
+		)
+		return
+	}
+	// 返回签名值
+	c.JSON(http.StatusOK,
+		model.BaseResponseInstance.SuccessMsg(hex.EncodeToString(sign)),
+	)
+	return
+}
+
+func VerityController(c *gin.Context) {
+	data := c.PostForm("data")
+	id := c.PostForm("id")
+	if data == "" || id == "" {
+		c.JSON(http.StatusBadRequest,
+			model.BaseResponseInstance.FailMsg(config.RequestParameterIsNull),
+		)
+		return
+	}
+	Flag := service.VerifySignService(id, []byte(data))
+	if !Flag {
+		c.JSON(http.StatusBadRequest,
+			model.BaseResponseInstance.FailMsg(config.SignIsWrong),
+		)
+		return
+	}
+	c.JSON(http.StatusOK,
+		model.BaseResponseInstance.Success(),
+	)
 	return
 }

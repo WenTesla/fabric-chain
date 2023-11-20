@@ -38,4 +38,6 @@ const (
 	UserPasswordIsEmpty = "用户密码为空"
 
 	ParaLengthIsWrong = "参数长度不正确"
+
+	SignIsWrong = "签名错误"
 )

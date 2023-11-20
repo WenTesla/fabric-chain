@@ -158,7 +158,7 @@ func (s *SmartContract) UpdateUser(ctx contractapi.TransactionContextInterface, 
 	if err != nil {
 		return err
 	}
-	println(user)
+	//println(user)
 	return ctx.GetStub().PutState(id, userJSON)
 }
 
@@ -212,6 +212,24 @@ func (s *SmartContract) UpdatePassword(ctx contractapi.TransactionContextInterfa
 		return err
 	}
 	return ctx.GetStub().PutState(id, userJSON)
+}
+
+// 读取某个用户的公钥
+func (s *SmartContract) GetPublicKey(ctx contractapi.TransactionContextInterface, id string) (publicKey string, err error) {
+	exist, err := s.UserExists(ctx, id)
+	if err != nil {
+		return
+	}
+	if !exist {
+		return publicKey, fmt.Errorf("user is not exist: %v", err)
+	}
+	bytes, err := ctx.GetStub().GetState(id)
+	if err != nil {
+		return
+	}
+	var user Users
+	json.Unmarshal(bytes, &user)
+	return user.PublicKey, nil
 }
 func main() {
 	userChaincode, err := contractapi.NewChaincode(&SmartContract{})

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -16,7 +17,13 @@ import (
 	"web/config"
 )
 
-const name = ""
+const (
+	SignValue = "Secret"
+)
+
+var (
+	signHash = sha256.Sum256([]byte(SignValue))
+)
 
 // 生成公私密钥对 返回pem格式
 
@@ -40,9 +47,6 @@ func GenRsaKey(bits int) (privateKey, publicKey string) {
 		Bytes:   marshalPKCS1PrivateKey,
 	})
 	privateKey = string(memoryPrivateKey)
-	//privateKey = base64.StdEncoding.EncodeToString(marshalPKCS1PrivateKey)
-	//publicKey = base64.StdEncoding.EncodeToString(marshalPKCS1PublicKey)
-
 	fmt.Printf("私钥为:\n%x\n", privateKey)
 	fmt.Printf("公钥为:\n%x\n", publicKey)
 	return
@@ -213,4 +217,91 @@ func UpdateService(Id string, password string) error {
 	password = hashPassword(password)
 	err = gateway.UpdatePassword(gateway.UserContract, Id, password)
 	return err
+}
+
+// 签名 后期做成前端签名
+func SignService(data string, file []byte) (sign []byte, err error) {
+	// 加载私钥
+	key, err := LoadPrivateKey(file)
+	if err != nil {
+		return
+	}
+	// 用私钥签名
+	sign, err = SignWithRsa(data, key)
+	if err != nil {
+		return
+	}
+	return
+}
+
+// 验证签名
+func VerifySignService(id string, sign []byte) bool {
+	user, err := gateway.QueryUser(gateway.UserContract, id)
+	if err != nil {
+		return false
+	}
+	// 编码
+	key, err := LoadPublicKey([]byte(user.PublicKey))
+	if err != nil {
+		return false
+	}
+	err = Verify(*key, SignValue, string(sign))
+	if err != nil {
+		return false
+	}
+	return true
+}
+
+// 私钥签名
+
+func SignWithRsa(data string, privateKey *rsa.PrivateKey) (signature []byte, err error) {
+	// 签名
+	signature, err = rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA256, signHash[:])
+	if err != nil {
+		fmt.Println("签名失败:", err)
+		return
+	}
+	return
+}
+
+// 加载私钥文件
+func LoadPrivateKey(file []byte) (*rsa.PrivateKey, error) {
+
+	// 解码PEM格式的私钥文件
+	privateKeyBlock, _ := pem.Decode(file)
+	if privateKeyBlock == nil {
+		return nil, fmt.Errorf("无法解析PEM格式的私钥文件")
+	}
+
+	// 解析RSA私钥
+	privateKey, err := x509.ParsePKCS1PrivateKey(privateKeyBlock.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("无法解析RSA私钥: %v", err)
+	}
+
+	return privateKey, nil
+}
+
+// 加载公钥文件
+func LoadPublicKey(file []byte) (*rsa.PublicKey, error) {
+
+	// 解码PEM格式的私钥文件
+	publicKeyBlock, _ := pem.Decode(file)
+	if publicKeyBlock == nil {
+		return nil, fmt.Errorf("无法解析PEM格式的公钥文件")
+	}
+	// 解析RSA私钥
+	publicKey, err := x509.ParsePKCS1PublicKey(publicKeyBlock.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("无法解析RSA公钥: %v", err)
+	}
+	return publicKey, nil
+}
+
+// 验证   1公钥2数据3签名值
+func Verify(publicKey rsa.PublicKey, data string, sign string) (err error) {
+	signature, err := hex.DecodeString(sign)
+	hashed := sha256.Sum256([]byte(data))
+	err = rsa.VerifyPKCS1v15(&publicKey, crypto.SHA256, hashed[:], signature)
+	return
 }

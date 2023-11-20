@@ -22,6 +22,7 @@ type Cert struct {
 	CertHash  string `json:"certHash"`  //证书的HASH
 	Sign      string `json:"sign"`      // 证书的签名值
 	AccountId string `json:"accountId"` //用户区块链唯一ID 指向用户的Id
+	Status    string `json:"status"`    //证书的状态
 }
 
 // MockCert 假数据
