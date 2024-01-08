@@ -21,7 +21,7 @@ func main() {
 }
 
 func loadRouter(r *gin.Engine) {
-	// 注册接口 todo
+	// 注册接口
 	r.POST("/user/registerWithKey", controller.RegisterWithCert)
 	// 注册接口
 	r.POST("/user/registerByGenKey", controller.RegisterByGenRSA)
@@ -30,14 +30,15 @@ func loadRouter(r *gin.Engine) {
 	r.POST("/user/login/", controller.Login)
 	// 查询接口
 	r.POST("/user/info", controller.UserInfo)
+	// 查询所有用户接口
+	r.POST("/user/allUser", controller.AllUserInfo)
 	// 修改密码
 	r.POST("/user/updatePassword", controller.UpdatePassword)
 	// 注册证书
 	r.POST("/cert/register", controller.CertRegister)
 	// 验证证书数据
-	r.POST("/chain/verity", controller.VerityCertController)
+	r.POST("/chain/verity", controller.VerityCert)
 	// 签名
-	r.POST("/user/sign", controller.SignController)
+	r.POST("/user/sign", controller.Sign)
 	// 验签
-	r.POST("/user/verity", controller.VerityController)
 }

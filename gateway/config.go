@@ -25,13 +25,11 @@ const (
 	keyPath = cryptoPath + "/users/User1@org1.example.com/msp/keystore/"
 	// tls的证书
 	tlsCertPath = cryptoPath + "/peers/peer0.org1.example.com/tls/ca.crt"
-	// peer节点
+	// peer一个节点
 	peerEndpoint = "localhost:7051"
 	// 网关的peer
 	gatewayPeer = "peer0.org1.example.com"
 )
-
-var now = time.Now()
 
 // newGrpcConnection creates a gRPC connection to the gateway server.
 // 新连接
@@ -41,16 +39,13 @@ func newGrpcConnection() *grpc.ClientConn {
 	if err != nil {
 		panic(err)
 	}
-
 	certPool := x509.NewCertPool()
 	certPool.AddCert(certificate)
 	transportCredentials := credentials.NewClientTLSFromCert(certPool, gatewayPeer)
-
 	connection, err := grpc.Dial(peerEndpoint, grpc.WithTransportCredentials(transportCredentials))
 	if err != nil {
 		panic(fmt.Errorf("failed to create gRPC connection: %w", err))
 	}
-
 	return connection
 }
 
@@ -150,25 +145,19 @@ func InitContract() *client.Contract {
 	// 开始执行
 	println("开始执行Init程序")
 	InitLedger(contract)
-	//QueryUsers(contract)
 	return contract
 }
 
-func Init() *client.Contract {
+func InitUserContract() *client.Contract {
 	// channel 名称
 	channelName := "mychannel"
 	// 链码名称
-	chaincodeName := "basic"
+	chaincodeName := "user"
 	// The gRPC client connection should be shared by all gateway connections to this endpoint
 	// 创建 grpc 连接
 	clientConnection := newGrpcConnection()
-	//
-	//defer clientConnection.Close()
-
 	id := newIdentity()
-
 	sign := newSign()
-
 	// Create a gateway connection for a specific client identity
 	gw, err := client.Connect(
 		id,
@@ -188,6 +177,38 @@ func Init() *client.Contract {
 	network := gw.GetNetwork(channelName)
 	//
 
+	contract := network.GetContract(chaincodeName)
+	println("开始启动智能合约")
+	// 开始执行
+	println("开始执行Init程序")
+	return contract
+}
+
+func InitCA() *client.Contract {
+	// channel 名称
+	channelName := "mychannel"
+	// 链码名称
+	chaincodeName := "RootCA"
+	// The gRPC client connection should be shared by all gateway connections to this endpoint
+	// 创建 grpc 连接
+	clientConnection := newGrpcConnection()
+	id := newIdentity()
+	sign := newSign()
+	// Create a gateway connection for a specific client identity
+	gw, err := client.Connect(
+		id,
+		client.WithSign(sign),
+		client.WithClientConnection(clientConnection),
+		// Default timeouts for different gRPC calls
+		client.WithEvaluateTimeout(5*time.Second),
+		client.WithEndorseTimeout(15*time.Second),
+		client.WithSubmitTimeout(5*time.Second),
+		client.WithCommitStatusTimeout(1*time.Minute),
+	)
+	if err != nil {
+		panic(err)
+	}
+	network := gw.GetNetwork(channelName)
 	contract := network.GetContract(chaincodeName)
 	println("开始启动智能合约")
 	// 开始执行

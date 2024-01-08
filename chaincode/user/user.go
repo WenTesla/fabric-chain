@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 	"log"
+	"strconv"
+	"time"
 )
 
 // SmartContract provides functions for managing an user
@@ -12,36 +14,50 @@ type SmartContract struct {
 	contractapi.Contract
 }
 
+// 用户
+
 type Users struct {
-	// Id
+	// 唯一Id
 	ID string `json:"Id"`
-	// 姓名
-	Name string `json:"name"`
 	// 密码
 	Password string `json:"password"`
 	// 邮箱
 	Email string `json:"email"`
-	// 是否管理员
-	IsAdmin int `json:"isAdmin"`
+	// 是否为CA 0-为普通用户 1-为CA 普通用户只拥有申请证书和查看证书权限，而CA审核方拥有查询、撤销、审核申请者身份等权限
+	IsCA int `json:"isCA"`
 	//// 创建时间
 	CreateTime string `json:"createTime"`
 	//// 修改时间
 	UpdateTime string `json:"updateTime"`
-	// RSA 公钥 base64编码
+	// 上次登录时间 时间戳
+	LastLoginTime string `json:"lastLoginTime"`
+	// RSA 公钥
 	PublicKey string `json:"publicKey"`
-	//// RSA 私钥
-	//SecretKey string `json:"secretKey"`
 	// 证书Id
 	CertId string `json:"certId"`
+	// 状态 0-正常 1-禁用
+	Status int `json:"status"`
+}
+
+// HistoryQueryResult structure used for returning result of history query
+type HistoryQueryResult struct {
+	Record    *Users    `json:"user"`
+	TxId      string    `json:"txId"`
+	Timestamp time.Time `json:"timestamp"`
+	IsDelete  bool      `json:"isDelete"`
 }
 
 //  初始化账本
 
 func (s *SmartContract) InitLedger(ctx contractapi.TransactionContextInterface) error {
+	timestamp, err := ctx.GetStub().GetTxTimestamp()
+	if err != nil {
+		return err
+	}
 	var users = []Users{
-		{ID: "1", Name: "bowen", Password: "123456"},
-		{ID: "2", Name: "admin", Password: "123456"},
-		{ID: "3", Name: "test", Password: "123456"}}
+		{ID: "1", Password: "123456"},
+		{ID: "2", Password: "123456"},
+		{ID: "3", Password: "123456", CreateTime: strconv.FormatInt(timestamp.GetSeconds(), 10)}}
 	for _, user := range users {
 		userJSON, err := json.Marshal(user)
 		if err != nil {
@@ -52,12 +68,13 @@ func (s *SmartContract) InitLedger(ctx contractapi.TransactionContextInterface) 
 			return fmt.Errorf("failed to put to world state. %v", err)
 		}
 	}
+	fmt.Println("初始化成功")
 	return nil
 }
 
-//  创建用户
+//  创建用户 id password email publicKey
 
-func (s *SmartContract) CreateUser(ctx contractapi.TransactionContextInterface, id, name, password, email, createTime, publicKey string) error {
+func (s *SmartContract) CreateUser(ctx contractapi.TransactionContextInterface, id, password, email, publicKey string) error {
 	exists, err := s.UserExists(ctx, id)
 	if err != nil {
 		return err
@@ -65,16 +82,17 @@ func (s *SmartContract) CreateUser(ctx contractapi.TransactionContextInterface, 
 	if exists {
 		return fmt.Errorf("the user %s already exists", id)
 	}
+	timestamp, err := ctx.GetStub().GetTxTimestamp()
+	if err != nil {
+		return err
+	}
 	user := Users{
 		ID:         id,
-		Name:       name,
 		Password:   password,
 		Email:      email,
-		IsAdmin:    0,
-		CreateTime: createTime,
-		UpdateTime: createTime,
+		CreateTime: strconv.FormatInt(timestamp.GetSeconds(), 10),
+		UpdateTime: strconv.FormatInt(timestamp.GetSeconds(), 10),
 		PublicKey:  publicKey,
-		//SecretKey:  secretKey,
 	}
 	userJSON, err := json.Marshal(user)
 	if err != nil {
@@ -173,14 +191,12 @@ func (s *SmartContract) GetAllUsers(ctx contractapi.TransactionContextInterface)
 		return nil, err
 	}
 	defer resultsIterator.Close()
-
 	var users []*Users
 	for resultsIterator.HasNext() {
 		queryResponse, err := resultsIterator.Next()
 		if err != nil {
 			return nil, err
 		}
-
 		var user Users
 		err = json.Unmarshal(queryResponse.Value, &user)
 		if err != nil {
@@ -188,7 +204,6 @@ func (s *SmartContract) GetAllUsers(ctx contractapi.TransactionContextInterface)
 		}
 		users = append(users, &user)
 	}
-
 	return users, nil
 }
 
@@ -214,30 +229,142 @@ func (s *SmartContract) UpdatePassword(ctx contractapi.TransactionContextInterfa
 	return ctx.GetStub().PutState(id, userJSON)
 }
 
-// 读取某个用户的公钥
-func (s *SmartContract) GetPublicKey(ctx contractapi.TransactionContextInterface, id string) (publicKey string, err error) {
-	exist, err := s.UserExists(ctx, id)
+// 创建CA用户 -Id,Password,email
+
+func (s *SmartContract) CreateCAUser(ctx contractapi.TransactionContextInterface, args ...string) error {
+	// 判断是否有重复id
+	exist, err := s.UserExists(ctx, args[0])
+	if exist {
+		return err
+	}
+	timestamp, err := ctx.GetStub().GetTxTimestamp()
 	if err != nil {
-		return
+		return err
 	}
-	if !exist {
-		return publicKey, fmt.Errorf("user is not exist: %v", err)
+	// 创建用户
+	user := Users{
+		ID:         args[0],
+		Password:   args[1],
+		Email:      args[2],
+		IsCA:       1,
+		CreateTime: strconv.FormatInt(timestamp.GetSeconds(), 10),
+		UpdateTime: strconv.FormatInt(timestamp.GetSeconds(), 10),
+		PublicKey:  "",
+		CertId:     "",
+		Status:     0,
 	}
+	bytes, err := json.Marshal(user)
+	if err != nil {
+		return err
+	}
+	return ctx.GetStub().PutState(args[0], bytes)
+}
+
+// 根据用户Id禁用用户
+
+func (s *SmartContract) BanUser(ctx contractapi.TransactionContextInterface, id string) error {
 	bytes, err := ctx.GetStub().GetState(id)
 	if err != nil {
-		return
+		return err
 	}
 	var user Users
-	json.Unmarshal(bytes, &user)
-	return user.PublicKey, nil
+	err = json.Unmarshal(bytes, &user)
+	if err != nil {
+		return err
+
+	}
+	user.Status = 1
+	bytes, err = json.Marshal(user)
+	if err != nil {
+		return err
+	}
+	return ctx.GetStub().PutState(id, bytes)
 }
+
+// 根据用户id解禁用户
+
+func (s *SmartContract) UnblockedUser(ctx contractapi.TransactionContextInterface, id string) error {
+	bytes, err := ctx.GetStub().GetState(id)
+	if err != nil {
+		return err
+	}
+	var user Users
+	err = json.Unmarshal(bytes, &user)
+	if err != nil {
+		return err
+
+	}
+	user.Status = 0
+	bytes, err = json.Marshal(user)
+	if err != nil {
+		return err
+	}
+	return ctx.GetStub().PutState(id, bytes)
+}
+
+// 获取历史
+
+// GetAssetHistory returns the chain of custody for an asset since issuance.
+func (s *SmartContract) GetAssetHistory(ctx contractapi.TransactionContextInterface, ID string) ([]HistoryQueryResult, error) {
+	log.Printf("GetHistory: ID %v", ID)
+	resultsIterator, err := ctx.GetStub().GetHistoryForKey(ID)
+	if err != nil {
+		return nil, err
+	}
+	defer resultsIterator.Close()
+	var records []HistoryQueryResult
+	for resultsIterator.HasNext() {
+		response, err := resultsIterator.Next()
+		if err != nil {
+			return nil, err
+		}
+		var user Users
+		if len(response.Value) > 0 {
+			err = json.Unmarshal(response.Value, &user)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			user = Users{
+				ID: ID,
+			}
+		}
+		timestamp := response.Timestamp.AsTime()
+		if err != nil {
+			return nil, err
+		}
+		record := HistoryQueryResult{
+			TxId:      response.TxId,
+			Timestamp: timestamp,
+			Record:    &user,
+			IsDelete:  response.IsDelete,
+		}
+		records = append(records, record)
+	}
+	return records, nil
+}
+
+func (s *SmartContract) CreateUserWithJson(ctx contractapi.TransactionContextInterface, user Users) error {
+	exists, err := s.UserExists(ctx, user.ID)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return fmt.Errorf("the user %s already exists", user.ID)
+	}
+	bytes, err := json.Marshal(user)
+	if err != nil {
+		return err
+	}
+	return ctx.GetStub().PutState(user.ID, bytes)
+}
+
 func main() {
 	userChaincode, err := contractapi.NewChaincode(&SmartContract{})
 	if err != nil {
 		log.Panicf("Error creating chaincode: %v", err)
 	}
-
-	if err := userChaincode.Start(); err != nil {
+	if err = userChaincode.Start(); err != nil {
 		log.Panicf("Error starting  chaincode: %v", err)
 	}
 }

@@ -12,35 +12,53 @@ import (
 	"web/service"
 )
 
+type LoginRecord struct {
+	User     string `form:"user" json:"user" binding:"required"`
+	Password string `form:"password" json:"password" binding:"required"`
+}
+
 // 用户注册 上传自己的公钥
 
 func RegisterWithCert(c *gin.Context) {
-	username := c.PostForm("username")
+	id := c.PostForm("id")
 	password := c.PostForm("password")
 	email := c.PostForm("email")
-	PublicKey := c.PostForm("PublicKey")
-
 	// 单文件
-	file, _ := c.FormFile("file")
+	file, err := c.FormFile("publickey")
+	if err != nil {
+		c.JSON(http.StatusBadRequest,
+			model.BaseResponseInstance.FailMsg(config.FileUploadFalse),
+		)
+		return
+	}
 	log.Println(file.Filename)
+	// 取出数据
+	src, err := file.Open()
+	if err != nil {
+		c.JSON(http.StatusBadRequest,
+			model.BaseResponseInstance.FailMsg(config.FileParseFalse),
+		)
+		return
+	}
+	defer src.Close()
+	bytes, err := io.ReadAll(src)
 
 	//先判空
-	if username == "" || password == "" {
+	if id == "" || password == "" {
 		c.JSON(http.StatusBadRequest,
 			model.BaseResponseInstance.FailMsg("账号密码为空"),
 		)
 		return
 	}
 	// 先校验参数长度
-	if len(password) > 32 || len(password) <= 5 || len(username) > 32 {
+	if len(password) > 32 || len(password) <= 5 || len(id) > 32 {
 		c.JSON(http.StatusBadRequest,
 			model.BaseResponseInstance.FailMsg(config.ParaLengthIsWrong),
 		)
 		return
 	}
-	var err error = nil
-	// 用户生成密钥对
-	err = service.RegisterService(username, password, email, PublicKey)
+	// 用户上传自己的公钥
+	err = service.RegisterService(id, password, email, string(bytes))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
 		return
@@ -52,7 +70,7 @@ func RegisterWithCert(c *gin.Context) {
 // 用户注册 系统生成，用户的私钥
 
 func RegisterByGenRSA(c *gin.Context) {
-	username := c.PostForm("username")
+	username := c.PostForm("id")
 	password := c.PostForm("password")
 	email := c.PostForm("email")
 	//先判空
@@ -85,13 +103,13 @@ func RegisterByGenRSA(c *gin.Context) {
 
 }
 
-// 用户登录 必须附带pki颁发的私钥
+// 用户登录 必须附带签名
 
 func Login(c *gin.Context) {
-	username := c.PostForm("username")
+	id := c.PostForm("id")
 	password := c.PostForm("password")
 	// 单文件
-	file, err := c.FormFile("privateKey")
+	file, err := c.FormFile("sign")
 	if err != nil {
 		c.JSON(http.StatusBadRequest,
 			model.BaseResponseInstance.FailMsg(config.FileUploadFalse),
@@ -117,21 +135,21 @@ func Login(c *gin.Context) {
 	}
 
 	//先判空
-	if username == "" || password == "" {
+	if id == "" || password == "" {
 		c.JSON(http.StatusBadRequest,
-			model.BaseResponseInstance.FailMsg("账号密码为空"),
+			model.BaseResponseInstance.FailMsg(config.UserPasswordIsEmpty),
 		)
 		return
 	}
 	// 先校验参数长度
-	if len(password) > 32 || len(password) <= 5 || len(username) > 32 {
+	if len(password) > 32 || len(password) <= 5 || len(id) > 32 {
 		c.JSON(http.StatusBadRequest,
 			model.BaseResponseInstance.FailMsg(config.ParaLengthIsWrong),
 		)
 		return
 	}
-	// 密钥
-	err = service.LoginService(username, password, bytes)
+	// 登录服务
+	err = service.LoginService(id, password, bytes)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
 		return
@@ -172,7 +190,8 @@ func UpdatePassword(c *gin.Context) {
 }
 
 // 签名
-func SignController(c *gin.Context) {
+
+func Sign(c *gin.Context) {
 	// 单文件
 	file, err := c.FormFile("privateKey")
 	if err != nil {
@@ -198,8 +217,9 @@ func SignController(c *gin.Context) {
 		)
 		return
 	}
-	//data := c.PostForm("data")
-	sign, err := service.SignService(service.SignValue, bytes)
+	id := c.PostForm("id")
+	// 用用户的id做签名的原始信息
+	sign, err := service.SignService(id, bytes)
 	if err != nil {
 		c.JSON(http.StatusBadRequest,
 			model.BaseResponseInstance.FailMsg(err.Error()),
@@ -213,24 +233,15 @@ func SignController(c *gin.Context) {
 	return
 }
 
-func VerityController(c *gin.Context) {
-	data := c.PostForm("data")
-	id := c.PostForm("id")
-	if data == "" || id == "" {
-		c.JSON(http.StatusBadRequest,
-			model.BaseResponseInstance.FailMsg(config.RequestParameterIsNull),
-		)
-		return
+// 查询用户
+
+func AllUserInfo(c *gin.Context) {
+	users, err := service.AllUserInfoService()
+	//bytes, err := json.Marshal(users)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.Fail())
 	}
-	Flag := service.VerifySignService(id, []byte(data))
-	if !Flag {
-		c.JSON(http.StatusBadRequest,
-			model.BaseResponseInstance.FailMsg(config.SignIsWrong),
-		)
-		return
-	}
-	c.JSON(http.StatusOK,
-		model.BaseResponseInstance.Success(),
-	)
-	return
+	c.JSON(http.StatusOK, gin.H{
+		"UsersInfo": users,
+	})
 }

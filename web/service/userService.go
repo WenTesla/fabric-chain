@@ -12,8 +12,6 @@ import (
 	"errors"
 	"fmt"
 	gateway "gateway"
-	"log"
-	"time"
 	"web/config"
 )
 
@@ -113,18 +111,17 @@ func hashPassword(password string) string {
 	return hex.EncodeToString(bytes)
 }
 
-// 注册服务
+// 注册服务 用户自己提交公钥
 
-func RegisterService(username, password, email, publicKey string) error {
+func RegisterService(id, password, email, publicKey string) error {
 	// 先看是否存在当前Id
-	IsExist, err := gateway.IsExistUser(gateway.UserContract, username)
+	IsExist, err := gateway.IsExistUser(gateway.UserContract, id)
 	if IsExist {
 		return errors.New(config.UserIsExist)
 	}
 	password = hashPassword(password)
-	//_, publicKey := GenRsaKey(1024)
-	encodeToString := base64.StdEncoding.EncodeToString([]byte(publicKey))
-	err = gateway.CreateUser(gateway.UserContract, username, username, password, email, time.Now().String(), encodeToString)
+	//encodeToString := base64.StdEncoding.EncodeToString([]byte(publicKey))
+	err = gateway.CreateUser(gateway.UserContract, id, password, email, publicKey)
 	if err != nil {
 		return err
 	}
@@ -133,36 +130,24 @@ func RegisterService(username, password, email, publicKey string) error {
 
 // 注册并且生成密钥
 
-func RegisterServiceWithGenRsaKey(username, password, email string) (error, []byte) {
-	// 先看是否存在当前Id
-	//user, err := gateway.QueryUser(gateway.UserContract, username)
-	//if err != nil {
-	//	return err, nil
-	//}
-	//
-	//if user.ID != "" {
-	//	return errors.New("当前用户昵称已存在"), nil
-	//}
-	isExistUser, err := gateway.IsExistUser(gateway.UserContract, username)
+func RegisterServiceWithGenRsaKey(id, password, email string) (error, []byte) {
+	isExistUser, err := gateway.IsExistUser(gateway.UserContract, id)
 	if isExistUser {
 		return errors.New(config.UserIsExist), nil
 	}
 	password = hashPassword(password)
 	privateKey, publicKey := GenRsaKey(1024)
-	//parsePrivateKey, err := ParsePrivateKey(privateKey)
-	//key, err := ParsePublicKey(publicKey)
-
-	err = gateway.CreateUser(gateway.UserContract, username, username, password, email, time.Now().String(), publicKey)
+	err = gateway.CreateUser(gateway.UserContract, id, password, email, publicKey)
 	if err != nil {
 		return err, nil
 	}
 	return nil, []byte(privateKey)
 }
 
-// 登录 附带 密钥
+// 登录 附带 签名
 
-func LoginService(username, password string, file []byte) error {
-	user, err := gateway.QueryUser(gateway.UserContract, username)
+func LoginService(id, password string, signature []byte) error {
+	user, err := gateway.QueryUser(gateway.UserContract, id)
 	if err != nil {
 		return errors.New(config.UserIdOrPasswordFalse)
 	}
@@ -170,31 +155,16 @@ func LoginService(username, password string, file []byte) error {
 	if user.Password != password {
 		return errors.New("账户名或密码错误")
 	}
-	// 验证密钥对
-	// 解析公钥文件
-	block, _ := pem.Decode(file)
-	if block == nil || block.Type != "RSA PRIVATE KEY" {
-		log.Println("failed to decode PEM block containing  key")
-		return errors.New("解析错误")
-	}
-
-	//// 解析公钥
-	//PublicKeyByte, err := base64.StdEncoding.DecodeString(user.PublicKey)
-	//if err != nil {
-	//	return err
-	//}
-	// 解析私钥
-	//decodeString, err := base64.StdEncoding.DecodeString(user.PublicKey)
-	if err != nil {
-		return err
-	}
-	// 判断公私密钥是否匹配
-	IsMatch := MatchRSAKey(string(user.PublicKey), string(file))
-	if !IsMatch {
-		return errors.New("公私密钥不匹配")
+	// 验证签名
+	Flag := VerifySignService(id, signature)
+	if Flag == false {
+		return errors.New("签名值错误")
 	}
 	return nil
+
 }
+
+// user 信息
 
 func UserInfoService(Id string) (gateway.Users, error) {
 	user, err := gateway.QueryUser(gateway.UserContract, Id)
@@ -203,6 +173,11 @@ func UserInfoService(Id string) (gateway.Users, error) {
 		return user, errors.New("用户为空")
 	}
 	return user, err
+}
+
+func AllUserInfoService() ([]gateway.Users, error) {
+	users, err := gateway.QueryAllUsers(gateway.UserContract)
+	return users, err
 }
 
 // 修改密码
@@ -220,14 +195,15 @@ func UpdateService(Id string, password string) error {
 }
 
 // 签名 后期做成前端签名
-func SignService(data string, file []byte) (sign []byte, err error) {
+
+func SignService(originMessage string, file []byte) (sign []byte, err error) {
 	// 加载私钥
 	key, err := LoadPrivateKey(file)
 	if err != nil {
 		return
 	}
 	// 用私钥签名
-	sign, err = SignWithRsa(data, key)
+	sign, err = SignWithRsa(originMessage, key)
 	if err != nil {
 		return
 	}
@@ -235,6 +211,7 @@ func SignService(data string, file []byte) (sign []byte, err error) {
 }
 
 // 验证签名
+
 func VerifySignService(id string, sign []byte) bool {
 	user, err := gateway.QueryUser(gateway.UserContract, id)
 	if err != nil {
@@ -245,18 +222,19 @@ func VerifySignService(id string, sign []byte) bool {
 	if err != nil {
 		return false
 	}
-	err = Verify(*key, SignValue, string(sign))
+	err = Verify(*key, id, string(sign))
 	if err != nil {
 		return false
 	}
 	return true
 }
 
-// 私钥签名
+// 私钥签名 签名的信息为用户Id
 
-func SignWithRsa(data string, privateKey *rsa.PrivateKey) (signature []byte, err error) {
+func SignWithRsa(originMessage string, privateKey *rsa.PrivateKey) (signature []byte, err error) {
+	hashed := sha256.Sum256([]byte(originMessage))
 	// 签名
-	signature, err = rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA256, signHash[:])
+	signature, err = rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA256, hashed[:])
 	if err != nil {
 		fmt.Println("签名失败:", err)
 		return
@@ -265,14 +243,13 @@ func SignWithRsa(data string, privateKey *rsa.PrivateKey) (signature []byte, err
 }
 
 // 加载私钥文件
-func LoadPrivateKey(file []byte) (*rsa.PrivateKey, error) {
 
+func LoadPrivateKey(file []byte) (*rsa.PrivateKey, error) {
 	// 解码PEM格式的私钥文件
 	privateKeyBlock, _ := pem.Decode(file)
 	if privateKeyBlock == nil {
 		return nil, fmt.Errorf("无法解析PEM格式的私钥文件")
 	}
-
 	// 解析RSA私钥
 	privateKey, err := x509.ParsePKCS1PrivateKey(privateKeyBlock.Bytes)
 	if err != nil {
@@ -283,8 +260,8 @@ func LoadPrivateKey(file []byte) (*rsa.PrivateKey, error) {
 }
 
 // 加载公钥文件
-func LoadPublicKey(file []byte) (*rsa.PublicKey, error) {
 
+func LoadPublicKey(file []byte) (*rsa.PublicKey, error) {
 	// 解码PEM格式的私钥文件
 	publicKeyBlock, _ := pem.Decode(file)
 	if publicKeyBlock == nil {
@@ -292,13 +269,24 @@ func LoadPublicKey(file []byte) (*rsa.PublicKey, error) {
 	}
 	// 解析RSA私钥
 	publicKey, err := x509.ParsePKCS1PublicKey(publicKeyBlock.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("无法解析RSA公钥: %v", err)
+	// 成功直接返回
+	if err == nil {
+		return publicKey, nil
 	}
-	return publicKey, nil
+	// 解析格式
+	key, err := x509.ParsePKIXPublicKey(publicKeyBlock.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	switch pub := key.(type) {
+	case *rsa.PublicKey:
+		return pub, nil
+	}
+	return nil, fmt.Errorf("无法解析RSA公钥: %v", err)
 }
 
 // 验证   1公钥2数据3签名值
+
 func Verify(publicKey rsa.PublicKey, data string, sign string) (err error) {
 	signature, err := hex.DecodeString(sign)
 	hashed := sha256.Sum256([]byte(data))

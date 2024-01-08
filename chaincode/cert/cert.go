@@ -1,109 +1,86 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 	"log"
+	"time"
 )
+
+// 证书
+
+type Certs struct {
+	// 证书的主键
+	CertId string `json:"certId"`
+	// 版本号
+	Version int `json:"version"`
+	// 开始时间
+	BeginDate time.Time `json:"beginDate"`
+	// 结束时间
+	EndDate time.Time `json:"endDate"`
+	// subject
+	Subject pkix.Name `json:"subject"`
+	// 颁发者
+	Issuer pkix.Name `json:"issuer"`
+	// 证书的字节数组
+	CertBytes []byte `json:"certBytes"`
+	// 证书的hash值
+	CertHashValue string `json:"certHashValue"`
+	// 所拥有的证书的用户的Id
+	UserId string `json:"userId"`
+}
+
+var Cert = x509.Certificate{
+	Raw:                         nil,
+	RawTBSCertificate:           nil,
+	RawSubjectPublicKeyInfo:     nil,
+	RawSubject:                  nil,
+	RawIssuer:                   nil,
+	Signature:                   nil,
+	SignatureAlgorithm:          0,
+	PublicKeyAlgorithm:          0,
+	PublicKey:                   nil,
+	Version:                     0,
+	SerialNumber:                nil,
+	Issuer:                      pkix.Name{},
+	Subject:                     pkix.Name{},
+	NotBefore:                   time.Time{},
+	NotAfter:                    time.Time{},
+	KeyUsage:                    0,
+	Extensions:                  nil,
+	ExtraExtensions:             nil,
+	UnhandledCriticalExtensions: nil,
+	ExtKeyUsage:                 nil,
+	UnknownExtKeyUsage:          nil,
+	BasicConstraintsValid:       false,
+	IsCA:                        false,
+	MaxPathLen:                  0,
+	MaxPathLenZero:              false,
+	SubjectKeyId:                nil,
+	AuthorityKeyId:              nil,
+	OCSPServer:                  nil,
+	IssuingCertificateURL:       nil,
+	DNSNames:                    nil,
+	EmailAddresses:              nil,
+	IPAddresses:                 nil,
+	URIs:                        nil,
+	PermittedDNSDomainsCritical: false,
+	PermittedDNSDomains:         nil,
+	ExcludedDNSDomains:          nil,
+	PermittedIPRanges:           nil,
+	ExcludedIPRanges:            nil,
+	PermittedEmailAddresses:     nil,
+	ExcludedEmailAddresses:      nil,
+	PermittedURIDomains:         nil,
+	ExcludedURIDomains:          nil,
+	CRLDistributionPoints:       nil,
+	PolicyIdentifiers:           nil,
+}
 
 // SmartContract provides functions for managing an user
 type SmartContract struct {
 	contractapi.Contract
-}
-
-// Cert 证书
-type Cert struct {
-	CertId    string `json:"certId"`    // 证书ID
-	Version   int    `json:"version"`   // 版本
-	BeginDate string `json:"beginDate"` // 开始时间
-	EndDate   string `json:"endDate"`   // 结束时间
-	Subject   string `json:"subject"`   // 使用者名称
-	CertHash  string `json:"certHash"`  //证书的HASH
-	Sign      string `json:"sign"`      // 证书的签名值
-	AccountId string `json:"accountId"` //用户区块链唯一ID 指向用户的Id
-	Status    string `json:"status"`    //证书的状态
-}
-
-// MockCert 假数据
-var MockCert = Cert{
-	CertId:    "-1",
-	Version:   3,
-	BeginDate: "",
-	EndDate:   "",
-	Subject:   "",
-	CertHash:  "",
-	Sign:      "",
-	AccountId: "",
-}
-
-// 初始化账本
-
-func (s *SmartContract) InitLedger(ctx contractapi.TransactionContextInterface) error {
-	certJson, err := json.Marshal(MockCert)
-	if err != nil {
-		return err
-	}
-	err = ctx.GetStub().PutState(MockCert.CertId, certJson)
-	return err
-}
-
-// 添加证书
-
-func (s *SmartContract) AddCert(ctx contractapi.TransactionContextInterface, id string, certJson []byte) error {
-	err := ctx.GetStub().PutState(id, certJson)
-	return err
-}
-
-// 删除证书
-
-func (s *SmartContract) DeleteCert(ctx contractapi.TransactionContextInterface, id string) error {
-	exists, err := s.CertExist(ctx, id)
-	if err != nil {
-		return err
-	}
-	if !exists {
-		return fmt.Errorf("the cert %s does not exist", id)
-	}
-
-	return ctx.GetStub().DelState(id)
-}
-
-//  返回用户与给定ID存在世界的状态
-
-func (s *SmartContract) CertExist(ctx contractapi.TransactionContextInterface, id string) (bool, error) {
-	certJson, err := ctx.GetStub().GetState(id)
-	if err != nil {
-		return false, fmt.Errorf("failed to read from world state: %v", err)
-	}
-	return certJson != nil, nil
-}
-
-// 获取所有的证书
-
-func (s *SmartContract) GetAllCerts(ctx contractapi.TransactionContextInterface) ([]*Cert, error) {
-	// GetStateByRange 查询参数为两个空字符串时即查询所有数据
-	resultsIterator, err := ctx.GetStub().GetStateByRange("", "")
-	if err != nil {
-		return nil, err
-	}
-	defer resultsIterator.Close()
-
-	var certs []*Cert
-	for resultsIterator.HasNext() {
-		queryResponse, err := resultsIterator.Next()
-		if err != nil {
-			return nil, err
-		}
-		var cert Cert
-		err = json.Unmarshal(queryResponse.Value, &cert)
-		if err != nil {
-			return nil, err
-		}
-		certs = append(certs, &cert)
-	}
-
-	return certs, nil
 }
 
 func main() {
@@ -111,7 +88,8 @@ func main() {
 	if err != nil {
 		log.Panicf("Error creating chaincode: %v", err)
 	}
-	if err := userChaincode.Start(); err != nil {
+	if err = userChaincode.Start(); err != nil {
 		log.Panicf("Error starting  chaincode: %v", err)
 	}
+	log.Printf("Chaincode deploy Successfully")
 }

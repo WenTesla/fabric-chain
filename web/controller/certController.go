@@ -14,5 +14,5 @@ func CertRegister(c *gin.Context) {
 	c.JSON(http.StatusOK, model.BaseResponseInstance.Success())
 }
 
-func VerityCertController(c *gin.Context) {
+func VerityCert(c *gin.Context) {
 }
