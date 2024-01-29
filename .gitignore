@@ -1,3 +1,3 @@
-/chaincode/user/vendor/
+/chaincode/userBytes/vendor/
 /chaincode/cert/vendor/
 /gateway/vendor/

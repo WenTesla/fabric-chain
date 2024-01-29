@@ -1,12 +1,18 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 	"log"
 	"strconv"
 	"time"
+)
+
+const (
+	rootCA = iota
+	inter
 )
 
 // SmartContract provides functions for managing an user
@@ -23,11 +29,11 @@ type Users struct {
 	Password string `json:"password"`
 	// 邮箱
 	Email string `json:"email"`
-	// 是否为CA 0-为普通用户 1-为CA 普通用户只拥有申请证书和查看证书权限，而CA审核方拥有查询、撤销、审核申请者身份等权限
+	// 是否为CA 0-为普通用户 1-为根CA 2-中间CA 普通用户只拥有申请证书和查看证书权限，而CA审核方拥有查询、撤销、审核申请者身份等权限
 	IsCA int `json:"isCA"`
-	//// 创建时间
+	// 创建时间
 	CreateTime string `json:"createTime"`
-	//// 修改时间
+	// 修改时间
 	UpdateTime string `json:"updateTime"`
 	// 上次登录时间 时间戳
 	LastLoginTime string `json:"lastLoginTime"`
@@ -88,12 +94,14 @@ func (s *SmartContract) CreateUser(ctx contractapi.TransactionContextInterface, 
 	}
 	user := Users{
 		ID:         id,
-		Password:   password,
+		Password:   fmt.Sprintf("%x", sha256.Sum256([]byte(password))),
 		Email:      email,
 		CreateTime: strconv.FormatInt(timestamp.GetSeconds(), 10),
 		UpdateTime: strconv.FormatInt(timestamp.GetSeconds(), 10),
 		PublicKey:  publicKey,
 	}
+	// 用户为
+	log.Printf("用户为\n%v\n", user)
 	userJSON, err := json.Marshal(user)
 	if err != nil {
 		return err
@@ -155,13 +163,12 @@ func (s *SmartContract) DeleteUser(ctx contractapi.TransactionContextInterface, 
 	if !exists {
 		return fmt.Errorf("the user %s does not exist", id)
 	}
-
 	return ctx.GetStub().DelState(id)
 }
 
 // 根据主键更新
 
-func (s *SmartContract) UpdateUser(ctx contractapi.TransactionContextInterface, id string, password string) error {
+func (s *SmartContract) UpdateUser(ctx contractapi.TransactionContextInterface, id, password, email string) error {
 	exists, err := s.UserExists(ctx, id)
 	if err != nil {
 		return err
@@ -169,14 +176,12 @@ func (s *SmartContract) UpdateUser(ctx contractapi.TransactionContextInterface, 
 	if !exists {
 		return fmt.Errorf("the user %s does not exist", id)
 	}
-
 	// overwriting original user with new user
-	user := Users{ID: id, Password: password}
+	var user = Users{ID: id, Password: fmt.Sprintf("%x", sha256.Sum256([]byte(password))), Email: email}
 	userJSON, err := json.Marshal(user)
 	if err != nil {
 		return err
 	}
-	//println(user)
 	return ctx.GetStub().PutState(id, userJSON)
 }
 
@@ -221,7 +226,7 @@ func (s *SmartContract) UpdatePassword(ctx contractapi.TransactionContextInterfa
 	if err != nil {
 		return err
 	}
-	user.Password = password
+	user.Password = fmt.Sprintf("%x", sha256.Sum256([]byte(password)))
 	userJSON, err := json.Marshal(user)
 	if err != nil {
 		return err
@@ -244,13 +249,12 @@ func (s *SmartContract) CreateCAUser(ctx contractapi.TransactionContextInterface
 	// 创建用户
 	user := Users{
 		ID:         args[0],
-		Password:   args[1],
+		Password:   fmt.Sprintf("%x", sha256.Sum256([]byte(args[1]))),
 		Email:      args[2],
 		IsCA:       1,
 		CreateTime: strconv.FormatInt(timestamp.GetSeconds(), 10),
 		UpdateTime: strconv.FormatInt(timestamp.GetSeconds(), 10),
 		PublicKey:  "",
-		CertId:     "",
 		Status:     0,
 	}
 	bytes, err := json.Marshal(user)
@@ -302,16 +306,34 @@ func (s *SmartContract) UnblockedUser(ctx contractapi.TransactionContextInterfac
 	return ctx.GetStub().PutState(id, bytes)
 }
 
+// 验证用户密码
+
+func (s *SmartContract) VerifyPassword(ctx contractapi.TransactionContextInterface, id, password string) error {
+	user, err := s.ReadUser(ctx, id)
+	if err != nil {
+		return err
+	}
+	if user.Password != fmt.Sprintf("%x", sha256.Sum256([]byte(password))) {
+		return fmt.Errorf("用户密码错误")
+	}
+	return nil
+}
+
 // 获取历史
 
-// GetAssetHistory returns the chain of custody for an asset since issuance.
-func (s *SmartContract) GetAssetHistory(ctx contractapi.TransactionContextInterface, ID string) ([]HistoryQueryResult, error) {
+// GetHistory returns the chain of custody for an asset since issuance.
+func (s *SmartContract) GetHistory(ctx contractapi.TransactionContextInterface, ID string) ([]HistoryQueryResult, error) {
 	log.Printf("GetHistory: ID %v", ID)
+	exists, err := s.UserExists(ctx, ID)
+	if !exists {
+		return nil, err
+	}
 	resultsIterator, err := ctx.GetStub().GetHistoryForKey(ID)
 	if err != nil {
 		return nil, err
 	}
 	defer resultsIterator.Close()
+	log.Printf("查询用户历史\n")
 	var records []HistoryQueryResult
 	for resultsIterator.HasNext() {
 		response, err := resultsIterator.Next()
@@ -357,6 +379,10 @@ func (s *SmartContract) CreateUserWithJson(ctx contractapi.TransactionContextInt
 		return err
 	}
 	return ctx.GetStub().PutState(user.ID, bytes)
+}
+
+func (s *SmartContract) Hello(ctx contractapi.TransactionContextInterface) string {
+	return "hello"
 }
 
 func main() {

@@ -42,7 +42,6 @@ func RegisterWithCert(c *gin.Context) {
 	}
 	defer src.Close()
 	bytes, err := io.ReadAll(src)
-
 	//先判空
 	if id == "" || password == "" {
 		c.JSON(http.StatusBadRequest,
@@ -70,18 +69,18 @@ func RegisterWithCert(c *gin.Context) {
 // 用户注册 系统生成，用户的私钥
 
 func RegisterByGenRSA(c *gin.Context) {
-	username := c.PostForm("id")
+	id := c.PostForm("id")
 	password := c.PostForm("password")
 	email := c.PostForm("email")
 	//先判空
-	if username == "" || password == "" {
+	if id == "" || password == "" {
 		c.JSON(http.StatusBadRequest,
 			model.BaseResponseInstance.FailMsg("账号密码为空"),
 		)
 		return
 	}
 	// 先校验参数长度
-	if len(password) > 32 || len(password) <= 5 || len(username) > 32 {
+	if len(password) > 32 || len(password) <= 5 || len(id) > 32 {
 		c.JSON(http.StatusBadRequest,
 			model.BaseResponseInstance.FailMsg(config.ParaLengthIsWrong),
 		)
@@ -89,13 +88,13 @@ func RegisterByGenRSA(c *gin.Context) {
 	}
 	var err error = nil
 	var bytes []byte = nil
-	err, bytes = service.RegisterServiceWithGenRsaKey(username, password, email)
+	err, bytes = service.RegisterServiceWithGenRsaKey(id, password, email)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
 		return
 	}
 	c.Writer.WriteHeader(http.StatusOK)
-	c.Header("Content-Disposition", fmt.Sprintf("%s.key", username))
+	c.Header("Content-Disposition", fmt.Sprintf("%s.key", id))
 	c.Header("Content-Type", "application/text/plain")
 	c.Header("Accept-Length", fmt.Sprintf("%d", len(bytes)))
 	c.Writer.Write((bytes))
@@ -162,15 +161,13 @@ func Login(c *gin.Context) {
 
 func UserInfo(c *gin.Context) {
 	userid := c.PostForm("id")
-	user, err := service.UserInfoService(userid)
+	userBytes, err := service.UserInfoService(userid)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
 		return
 	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"UserInfo": user,
-	})
+	c.JSON(http.StatusOK, model.BaseResponseInstance.SuccessDataBytes(userBytes))
+	return
 }
 
 // 修改密码
@@ -227,21 +224,37 @@ func Sign(c *gin.Context) {
 		return
 	}
 	// 返回签名值
-	c.JSON(http.StatusOK,
-		model.BaseResponseInstance.SuccessMsg(hex.EncodeToString(sign)),
-	)
+	c.Writer.WriteHeader(http.StatusOK)
+	c.Header("Content-Type", "application/text/plain")
+	c.Writer.WriteString(hex.EncodeToString(sign))
 	return
 }
 
 // 查询用户
 
 func AllUserInfo(c *gin.Context) {
-	users, err := service.AllUserInfoService()
-	//bytes, err := json.Marshal(users)
+	usersBytes, err := service.AllUserInfoService()
 	if err != nil {
 		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.Fail())
+		return
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"UsersInfo": users,
-	})
+	c.Writer.WriteHeader(http.StatusOK)
+	c.Header("Content-Type", "application/json")
+	c.Writer.Write(usersBytes)
+	return
+}
+
+// 查询用户的历史
+
+func AllUserHistoryInfo(c *gin.Context) {
+	id := c.PostForm("id")
+	bytes, err := service.UsersHistoryService(id)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
+		return
+	}
+	c.Writer.WriteHeader(http.StatusOK)
+	c.Header("Content-Type", "application/json")
+	c.Writer.Write(bytes)
+	return
 }

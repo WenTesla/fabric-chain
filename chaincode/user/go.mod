@@ -1,4 +1,4 @@
-module user
+module userBytes
 
 go 1.19
 

@@ -2,6 +2,11 @@ package model
 
 import "web/config"
 
+const (
+	success = "success"
+	fail    = "fail"
+)
+
 type BaseResponse struct {
 	// 状态码
 	StatusCode int8 `json:"status_code"`
@@ -13,48 +18,41 @@ type BaseResponse struct {
 
 var BaseResponseInstance = BaseResponse{}
 
-func (baseResponse *BaseResponse) Success() BaseResponse {
-	baseResponse.StatusCode = 0
-	baseResponse.StatusMsg = config.Success
-	return BaseResponseInstance
+func (*BaseResponse) Success() (response BaseResponse) {
+	response.StatusCode = 0
+	response.StatusMsg = success
+	return
 }
 
-func (baseResponse *BaseResponse) Fail() BaseResponse {
-	baseResponse.StatusCode = -1
-	baseResponse.StatusMsg = config.Fail
-	return BaseResponseInstance
+func (*BaseResponse) Fail() (response BaseResponse) {
+	response.StatusCode = -1
+	response.StatusMsg = config.Fail
+	return
 }
 
-func (baseResponse *BaseResponse) SuccessMsg(msg string) BaseResponse {
-	baseResponse.StatusCode = 0
-	baseResponse.StatusMsg = msg
-	return BaseResponseInstance
+func (*BaseResponse) SuccessMsg(msg string) (response BaseResponse) {
+	response.StatusCode = 0
+	response.StatusMsg = msg
+	return
 }
-func (baseResponse *BaseResponse) FailMsg(msg string) BaseResponse {
-	baseResponse.StatusCode = -1
-	baseResponse.StatusMsg = msg
-	return BaseResponseInstance
-}
-
-func (baseResponse *BaseResponse) SuccessData(data string) BaseResponse {
-	baseResponse.StatusCode = 0
-	baseResponse.Data = data
-	return BaseResponseInstance
-}
-func (baseResponse *BaseResponse) FailData(data string) BaseResponse {
-	baseResponse.StatusCode = -1
-	baseResponse.StatusMsg = data
-	return BaseResponseInstance
-}
-func (baseResponse *BaseResponse) SuccessDataBytes(data []byte) BaseResponse {
-	baseResponse.StatusCode = 0
-	baseResponse.Data = data
-	return BaseResponseInstance
+func (*BaseResponse) FailMsg(msg string) (response BaseResponse) {
+	response.StatusCode = -1
+	response.StatusMsg = msg
+	return
 }
 
-func (baseResponse *BaseResponse) Response(httpCode int8, Msg string, data any) BaseResponse {
-	baseResponse.StatusCode = httpCode
-	baseResponse.StatusMsg = Msg
-	baseResponse.Data = data
-	return BaseResponseInstance
+func (*BaseResponse) SuccessData(data any) (response BaseResponse) {
+	response.StatusCode = 0
+	response.Data = data
+	return
+}
+func (*BaseResponse) FailData(data string) (response BaseResponse) {
+	response.StatusCode = -1
+	response.StatusMsg = data
+	return
+}
+func (*BaseResponse) SuccessDataBytes(data []byte) (response BaseResponse) {
+	response.StatusCode = 0
+	response.Data = data
+	return
 }

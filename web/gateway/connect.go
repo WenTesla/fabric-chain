@@ -17,17 +17,18 @@ import (
 const (
 	// msp的ID
 	mspID = "Org1MSP"
-	// 路径
-	cryptoPath = "../test-network/organizations/peerOrganizations/org1.example.com"
-	// 证书的id
+	// 基础路径
+	//cryptoPath = "../../test-network/organizations/peerOrganizations/org1.example.com"
+	cryptoPath = "/root/fabric/fabric-chain/test-network/organizations/peerOrganizations/org1.example.com"
+	// 证书的路径
 	certPath = cryptoPath + "/users/User1@org1.example.com/msp/signcerts/User1@org1.example.com-cert.pem"
-	// 密钥
+	// 密钥的路径
 	keyPath = cryptoPath + "/users/User1@org1.example.com/msp/keystore/"
-	// tls的证书
+	// tls的证书路径
 	tlsCertPath = cryptoPath + "/peers/peer0.org1.example.com/tls/ca.crt"
-	// peer一个节点
+	// peer一个节点的url
 	peerEndpoint = "localhost:7051"
-	// 网关的peer
+	// 网关的peer域名
 	gatewayPeer = "peer0.org1.example.com"
 )
 
@@ -68,7 +69,6 @@ func newIdentity() *identity.X509Identity {
 	if err != nil {
 		panic(err)
 	}
-
 	return id
 }
 
@@ -90,7 +90,6 @@ func newSign() identity.Sign {
 	if err != nil {
 		panic(err)
 	}
-
 	return sign
 }
 
@@ -141,10 +140,6 @@ func InitContract() *client.Contract {
 	//
 
 	contract := network.GetContract(chaincodeName)
-	println("开始启动智能合约")
-	// 开始执行
-	println("开始执行Init程序")
-	InitLedger(contract)
 	return contract
 }
 
@@ -222,13 +217,9 @@ func InitConfigContract(channelName, chaincodeName string) *client.Contract {
 	// The gRPC client connection should be shared by all gateway connections to this endpoint
 	// 创建 grpc 连接
 	clientConnection := newGrpcConnection()
-	//
-	defer clientConnection.Close()
-
+	//defer clientConnection.Close()
 	id := newIdentity()
-
 	sign := newSign()
-
 	// Create a gateway connection for a specific client identity
 	gw, err := client.Connect(
 		id,
@@ -243,45 +234,8 @@ func InitConfigContract(channelName, chaincodeName string) *client.Contract {
 	if err != nil {
 		panic(err)
 	}
-	defer gw.Close()
-
+	//defer gw.Close()
 	network := gw.GetNetwork(channelName)
-	//
-
 	contract := network.GetContract(chaincodeName)
-	println("开始启动智能合约")
-	// 开始执行
-	println("开始执行Init程序")
-
 	return contract
-}
-
-// 初始化账本
-
-func InitLedger(contract *client.Contract) error {
-	fmt.Printf("\n--> Submit Transaction: InitLedger, function creates the initial set on the ledger \n")
-
-	_, err := contract.SubmitTransaction("InitLedger")
-	if err != nil {
-		fmt.Errorf("failed to submit transaction: %v", err)
-		panic(fmt.Errorf("failed to submit transaction: %v", err))
-	}
-
-	fmt.Printf("*** Transaction committed successfully\n")
-	return err
-}
-
-// 查询账本
-
-func QueryUsers(contract *client.Contract) error {
-	fmt.Println("\n--> Evaluate Transaction: GetAllUsers, function returns all the current users on the ledger")
-
-	evaluateResult, err := contract.EvaluateTransaction("GetAllUsers")
-	if err != nil {
-		panic(fmt.Errorf("failed to evaluate transaction: %w", err))
-	}
-	result := FormatJSON(evaluateResult)
-
-	fmt.Printf("*** Result:%s\n", result)
-	return err
 }

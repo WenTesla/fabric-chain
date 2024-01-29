@@ -1,18 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/hex"
-	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 	"log"
 	"math/big"
+	"strconv"
 	"time"
 )
 
@@ -29,29 +29,31 @@ var keyBytes = []byte("-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA0pR3EYb6
 var rootCertBytes = []byte("-----BEGIN CERTIFICATE-----\nMIIDbzCCAlcCFD/oOgfjWvIj8iIwRumGUXK9yjy3MA0GCSqGSIb3DQEBCwUAMHQx\nCzAJBgNVBAYTAkNOMQ4wDAYDVQQIDAVIVUJFSTELMAkGA1UEBwwCWFkxDTALBgNV\nBAoMBENBVUMxDTALBgNVBAsMBENBVUMxDjAMBgNVBAMMBWJvd2VuMRowGAYJKoZI\nhvcNAQkBFgsxMjNAMTYzLmNvbTAeFw0yNDAxMDEwNDEyMThaFw0zMzEyMjkwNDEy\nMThaMHQxCzAJBgNVBAYTAkNOMQ4wDAYDVQQIDAVIVUJFSTELMAkGA1UEBwwCWFkx\nDTALBgNVBAoMBENBVUMxDTALBgNVBAsMBENBVUMxDjAMBgNVBAMMBWJvd2VuMRow\nGAYJKoZIhvcNAQkBFgsxMjNAMTYzLmNvbTCCASIwDQYJKoZIhvcNAQEBBQADggEP\nADCCAQoCggEBANKUdxGG+tTqOX/n9Q45p7+k8wKao51BbIhfPR604mukLRbf+2HQ\nq224Nt2tzGOaq5ByTzb0eMCfEF4Y5lDXetOMXVfB5xztntd/T4O6btmRgxR4lawL\ntmL4q88wJ2aU8zyuYXUNC4x07L8ldkGt6KwsW43rR6oH55iiYGT2zu71vmxlCfSc\nue6GeZQ/WbDXoTmAmBANG7Nl2gvQUlddZQjVyps2yz70J0QNMAdGvc/ekJ+4Jpi+\n6puPUyn2yaAsb1+8rQhUAYZYAQrIFzo05pBh0++TWnoOhl4IIWNXHiuSXR/haDqI\nsQGJY0BrptE9kLRAU0e64eD6kYqQJs3fIUMCAwEAATANBgkqhkiG9w0BAQsFAAOC\nAQEAbdG7dk0WVDXrcKbp5B1hyMGI4qmHcwwFpr5nJup5PeNY0yJAcIDahuB4Lilg\ndD1ZBjvNmYb1rn3Ynfo6PHTIwS20wbSIle5bbldyJC0qhdcyIzYNlg9hG5sT/qPd\ntkfRxlmIGLB/iCPdQcTJBrnYzX0iRbikQz6U+IxERhfhMUBLAleG02lmknyOr7Fm\n794NOlz+IDF03aRvrrNcYZSezlTyOkEAJFy6LitgMPE3/+VTJFWaBqaqT0p3UZNX\nxrLwbE0TOeOZNO40rC1yG2FlpHYvRWvGCKaLNRRG+jxWmE7PUuhKNCFM1PxrihkH\ny4Cpwt/jYOk/vmhDvxEj2Thr7g==\n-----END CERTIFICATE-----\n")
 
 // 根证书模板
+
 var rootCsr = x509.Certificate{
 	SerialNumber: big.NewInt(2024),
 	Subject: pkix.Name{
-		Organization: []string{"CAUC"},
-		Country:      []string{"CN"},
-		Province:     []string{"TJ"},
-		Locality:     []string{"TJ"},
-		CommonName:   "Root CA",
+		Organization:       []string{"CAUC"},
+		OrganizationalUnit: []string{"CAUC"},
+		Country:            []string{"CN"},
+		Province:           []string{"TJ"},
+		Locality:           []string{"TJ"},
+		CommonName:         "Root CA", // 证书持有者通用名，需保持唯一，否则验证会失败
 	},
 	NotBefore:             time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
 	NotAfter:              time.Date(2025, time.January, 1, 0, 0, 0, 0, time.UTC),
-	BasicConstraintsValid: true,
-	IsCA:                  true,
-	MaxPathLen:            1,
+	BasicConstraintsValid: true, //为true表示IsCA/MaxPathLen/MaxPathLenZero有效，为false忽略这几个配置
+	IsCA:                  true, // 是否为CA证书，CA证书可以为下级证书签证，为false代表是终端证书，不能继续签证，根证书和中级证书都应该为true
+	MaxPathLen:            1,    // 表示证书链中可在此证书之后的非自颁发中级证书的最大层级，我们只需要1个中级证书就可以了，根证书设置为1，中级证书设置为0，那么中级证书就不能继续签署中级证书了。-1 表示未设置，且MaxPathLenZero == false && MaxPathLen == 0视为-1
 	MaxPathLenZero:        false,
-	KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+	KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign, //支持签发和吊销中级证书
 }
 
 // 根证书Id
 const rootCertID = "root_cert_id"
 
 // 根证书密钥Id
-const rootCertKey = "root_key"
+const rootCertKeyID = "root_key"
 
 // 根证书和密钥是否匹配
 
@@ -65,174 +67,275 @@ func InitLedger() error {
 	return nil
 }
 
-// 加载证书
+// 加载pem证书
 
-func loadCert(bytes []byte) (*x509.Certificate, error) {
+func parseX509Cert(bytes []byte) (*x509.Certificate, error) {
 	block, _ := pem.Decode(bytes)
-	if block == nil {
-		return nil, nil
+	if block == nil || block.Type != "CERTIFICATE" {
+		return nil, fmt.Errorf("pem证书加载失败,其格式为%s", block.Type)
 	}
-	cert, err := x509.ParseCertificate(block.Bytes)
+	return x509.ParseCertificate(block.Bytes)
+}
+
+// 加载公私密钥
+
+func parseKey(bytes []byte) (*rsa.PrivateKey, error) {
+	block, _ := pem.Decode(bytes)
+	if block == nil || block.Type != "RSA PRIVATE KEY" {
+		return nil, fmt.Errorf("密钥对格式错误，为%s", block.Type)
+	}
+	return x509.ParsePKCS1PrivateKey(block.Bytes)
+}
+
+// 颁发中间证书(pem编码)
+
+func (s *RootCAContract) IssueIntermediateCert(ctx contractapi.TransactionContextInterface, csrBytes string, pubBytes string) (string, error) {
+	log.Println("开始执行IssueIntermediateCert")
+	// 加载根证书的私钥
+	RootKey, err := parseKey(keyBytes)
+	if err != nil {
+		return "", fmt.Errorf("私钥加载失败")
+	}
+	// 解析RSA公钥
+	pub, err := parseRSAPubKey(pubBytes)
+	if err != nil {
+		return "", fmt.Errorf("解析公钥失败%v", err)
+	}
+	log.Printf("pub:%v\n", *pub)
+	// 解析csr请求
+	certificateRequest, err := parseCertificateRequest(csrBytes)
+	if err != nil {
+		return "", fmt.Errorf("解析scr请求失败%v", err)
+	}
+	log.Printf("csr:%v\n", *certificateRequest)
+	certificate := conveyCertificateRequestToCertificate(certificateRequest)
+	// 获取时间戳
+	timestamp, _ := ctx.GetStub().GetTxTimestamp()
+	log.Printf("当前交易的时间戳为%d", timestamp.GetSeconds())
+	// 将证书的ID赋予为时间戳
+	certificate.SerialNumber = big.NewInt(timestamp.GetSeconds())
+	// Der编码的
+	certBytes, err := x509.CreateCertificate(
+		rand.Reader,
+		&certificate,
+		&rootCsr,
+		pub,
+		RootKey,
+	)
+	if err != nil {
+		return "", fmt.Errorf("创建证书失败%v", err)
+	}
+	log.Printf("创建证书成功,cert字节为:%s", certBytes)
+	pemBytes := pem.EncodeToMemory(&pem.Block{
+		Type:    "CERTIFICATE",
+		Headers: nil,
+		Bytes:   certBytes,
+	})
+	log.Printf("pem证书为%s\n", pemBytes)
+	// 将证书的hash值上链
+	return string(pemBytes), ctx.GetStub().PutState(strconv.FormatInt(timestamp.GetSeconds(), 10), pemBytes)
+}
+
+// 解析CSR请求(pem格式)
+// openssl cli: openssl req -in xxx.csr
+
+func parseCertificateRequest(bytes string) (*x509.CertificateRequest, error) {
+	block, _ := pem.Decode([]byte(bytes))
+	if block == nil || block.Type != "CERTIFICATE REQUEST" {
+		return nil, fmt.Errorf("failed to decode PEM block containing CERTIFICATE REQUEST")
+	}
+	return x509.ParseCertificateRequest(block.Bytes)
+}
+
+// 解析pem公钥 返回RSA公钥
+
+func parseRSAPubKey(bytes string) (*rsa.PublicKey, error) {
+	block, _ := pem.Decode([]byte(bytes))
+	if block == nil || block.Type != "PUBLIC KEY" {
+		return nil, fmt.Errorf("failed to decode PEM block containing PUBLIC KEY")
+	}
+	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
 		return nil, err
 	}
-	return cert, nil
+	switch pub := pub.(type) {
+	case *rsa.PublicKey:
+		return pub, nil
+	default:
+		return nil, fmt.Errorf("此公钥非RSA公钥")
+	}
 }
 
-// 加载公私
+// 将Request转为Cert
 
-func loadKey(bytes []byte) (*rsa.PrivateKey, error) {
-	block, _ := pem.Decode(bytes)
-	if block == nil {
-		return nil, nil
+func conveyCertificateRequestToCertificate(certificateRequest *x509.CertificateRequest) x509.Certificate {
+	var certificate = x509.Certificate{
+		Raw:                         certificateRequest.Raw,
+		RawTBSCertificate:           certificateRequest.RawTBSCertificateRequest,
+		RawSubjectPublicKeyInfo:     certificateRequest.RawSubjectPublicKeyInfo,
+		RawSubject:                  certificateRequest.RawSubject,
+		RawIssuer:                   nil,
+		Signature:                   certificateRequest.Signature,
+		SignatureAlgorithm:          certificateRequest.SignatureAlgorithm,
+		PublicKeyAlgorithm:          certificateRequest.PublicKeyAlgorithm,
+		PublicKey:                   certificateRequest.PublicKey,
+		Version:                     certificateRequest.Version,
+		SerialNumber:                nil,
+		Issuer:                      pkix.Name{},
+		Subject:                     certificateRequest.Subject,
+		NotBefore:                   time.Time{},
+		NotAfter:                    time.Time{},
+		KeyUsage:                    x509.KeyUsageCertSign | x509.KeyUsageCRLSign, //
+		Extensions:                  certificateRequest.Extensions,
+		ExtraExtensions:             certificateRequest.ExtraExtensions,
+		UnhandledCriticalExtensions: nil,
+		ExtKeyUsage:                 nil,
+		UnknownExtKeyUsage:          nil,
+		BasicConstraintsValid:       true, //
+		IsCA:                        true, //
+		MaxPathLen:                  0,    //
+		MaxPathLenZero:              true,
+		SubjectKeyId:                nil,
+		AuthorityKeyId:              nil,
+		OCSPServer:                  nil,
+		IssuingCertificateURL:       nil,
+		DNSNames:                    certificateRequest.DNSNames,
+		EmailAddresses:              certificateRequest.EmailAddresses,
+		IPAddresses:                 certificateRequest.IPAddresses,
+		URIs:                        certificateRequest.URIs,
+		PermittedDNSDomainsCritical: false,
+		PermittedDNSDomains:         nil,
+		ExcludedDNSDomains:          nil,
+		PermittedIPRanges:           nil,
+		ExcludedIPRanges:            nil,
+		PermittedEmailAddresses:     nil,
+		ExcludedEmailAddresses:      nil,
+		PermittedURIDomains:         nil,
+		ExcludedURIDomains:          nil,
+		CRLDistributionPoints:       nil,
+		PolicyIdentifiers:           nil,
 	}
-	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
-	if err != nil {
-		return nil, nil
-	}
-	return privateKey, err
-}
-
-// 签发中间证书 csr，pubBytes皆为序列化的对象数组 return the certificate in DER encoding
-
-func (s *RootCAContract) SignIntermediateCert(ctx contractapi.TransactionContextInterface, csrBytes string, pubBytes string) (cert string, err error) {
-	// 加载根证书的私钥
-	bytes, err := ctx.GetStub().GetState(rootCertKey)
-	if err != nil {
-		return "", fmt.Errorf("私钥加载失败")
-	}
-
-	RootKey, err := loadKey(bytes)
-	if err != nil {
-		return "", fmt.Errorf("私钥加载失败")
-	}
-	log.Println("私钥")
-	var csr = x509.Certificate{}
-	err = json.Unmarshal([]byte(csrBytes), &csr)
-	if err != nil {
-		return
-	}
-	var pub = rsa.PublicKey{}
-	err = json.Unmarshal([]byte(pubBytes), &pub)
-	if err != nil {
-		return
-	}
-	certBytes, err := x509.CreateCertificate(
-		rand.Reader,
-		&csr,
-		&rootCsr,
-		&pub,
-		RootKey,
-	)
-	cert = string(certBytes)
-	log.Println("cert:\n" + hex.EncodeToString(certBytes))
-	return
-}
-
-// 返回pem编码的证书
-
-func (s *RootCAContract) SignIntermediatePemCert(ctx contractapi.TransactionContextInterface, csrBytes string, pubBytes string) (string, error) {
-	cert, err := s.SignIntermediateCert(ctx, csrBytes, pubBytes)
-	if err != nil {
-		return "", err
-	}
-	certBlock := &pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: []byte(cert),
-	}
-	pemData := pem.EncodeToMemory(certBlock)
-	return string(pemData), nil
-}
-
-// 加载
-
-func loadCertAndKey(certBytes, keyBytes []byte) (cert *x509.Certificate, key *rsa.PrivateKey, err error) {
-	cert, err = loadCert(certBytes)
-	key, err = loadKey(keyBytes)
-	return
-}
-
-// 加载私钥
-
-func LoadRootKey(ctx contractapi.TransactionContextInterface) (key *rsa.PrivateKey, err error) {
-	bytes, err := ctx.GetStub().GetState(rootCertKey)
-	err = json.Unmarshal(bytes, &key)
-	return
-}
-
-//加载证书
-
-func LoadRootCert(ctx contractapi.TransactionContextInterface) (cert x509.Certificate, err error) {
-	bytes, err := ctx.GetStub().GetState(rootCertID)
-	err = json.Unmarshal(bytes, &cert)
-	log.Println("load Root Cert:" + string(bytes))
-	return
-}
-
-func (s *RootCAContract) GetRootCertBytes(ctx contractapi.TransactionContextInterface) (string, error) {
-	log.Println("start func GetRootCert")
-	bytes, err := ctx.GetStub().GetState(rootCertID)
-	return string(bytes), err
+	return certificate
 }
 
 // 初始化 上传
 
 func (s *RootCAContract) Init(ctx contractapi.TransactionContextInterface) error {
-	log.Println("start Init function")
-	err := s.AddRootCertBytes(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to load root certificate: %w", err)
-	}
-
-	err = s.AddRootKeyBytes(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to load root key: %w", err)
-	}
-
-	log.Println("Init function Successfully")
 	return nil
-}
-
-// 根证书上链
-
-func (s *RootCAContract) AddRootCertBytes(ctx contractapi.TransactionContextInterface) error {
-	return ctx.GetStub().PutState(rootCertID, rootCertBytes)
-}
-
-// 根密钥字节数组上链接
-
-func (s *RootCAContract) AddRootKeyBytes(ctx contractapi.TransactionContextInterface) error {
-	return ctx.GetStub().PutState(rootCertKey, keyBytes)
 }
 
 // 中间证书
 
-// 验证中间证书
+// 验证中间证书的有效性
+
+func (s *RootCAContract) VerityCert(ctx contractapi.TransactionContextInterface, certBytes string) (bool, error) {
+	// 先检查证书合法性
+	cert, err := parseX509Cert([]byte(certBytes))
+	if err != nil {
+		return false, err
+	}
+	// 检查是否为根证书
+	if bytes.Equal(cert.RawIssuer, cert.RawSubject) && cert.IsCA {
+		return false, fmt.Errorf("此证书为根证书")
+	}
+	// 检查中间证书是否在库中
+	exists, err := s.CertExists(ctx, cert.SerialNumber.String())
+	if err != nil || exists == false {
+		return false, fmt.Errorf("中间证书不在区块链上")
+	}
+	// 验证中间证书是否为CA颁发
+	// 创建根证书池
+	pool := x509.NewCertPool()
+	// 添加根证书
+	pool.AddCert(&rootCsr)
+	if _, err := cert.Verify(x509.VerifyOptions{
+		Roots: pool,
+	}); err != nil {
+		return false, fmt.Errorf("验证证书失败: " + err.Error())
+	}
+	return true, nil
+}
 
 // 撤销证书
 
-func (s *RootCAContract) RevocationCert(ctx contractapi.TransactionContextInterface, id int) error {
-
-	return nil
+func (s *RootCAContract) RevocationCert(ctx contractapi.TransactionContextInterface, id string) error {
+	return s.DeleteCert(ctx, id)
 }
 
-func (s *RootCAContract) GetAllElem(ctx contractapi.TransactionContextInterface) error {
+// 查看所有中间证书
+
+func (s *RootCAContract) GetAllElem(ctx contractapi.TransactionContextInterface) ([]string, error) {
 	resultsIterator, err := ctx.GetStub().GetStateByRange("", "")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resultsIterator.Close()
+	//
+	var certs []string
 	for resultsIterator.HasNext() {
 		kv, err := resultsIterator.Next()
 		if err != nil {
-			return err
+			return nil, err
 		}
+		// 添加
+		certs = append(certs, string(kv.GetValue()))
 		log.Println(kv.Key + ":" + string(kv.Value))
 	}
-	return nil
+	return certs, nil
 }
+
+// 根据Id判断cert是否存在
+
+func (s *RootCAContract) CertExists(ctx contractapi.TransactionContextInterface, id string) (bool, error) {
+	certJSON, err := ctx.GetStub().GetState(id)
+	if err != nil {
+		return false, fmt.Errorf("failed to read from world state: %v", err)
+	}
+	return certJSON != nil, nil
+}
+
+// 根据ID删除cert
+
+func (s *RootCAContract) DeleteCert(ctx contractapi.TransactionContextInterface, id string) error {
+	// 判断是否存在
+	exists, err := s.CertExists(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("the cert %s does not exist", id)
+	}
+	return ctx.GetStub().DelState(id)
+}
+
+// 获取最新的中间证书
+
+func (s *RootCAContract) GetNewCert(ctx contractapi.TransactionContextInterface) (string, error) {
+	stateByRange, err := ctx.GetStub().GetStateByRange("", "")
+	if err != nil {
+		return "", err
+	}
+	defer stateByRange.Close()
+	kv, err := stateByRange.Next()
+	return string(kv.GetValue()), nil
+}
+
+func (s *RootCAContract) Hello(ctx contractapi.TransactionContextInterface) string {
+	return "hello"
+}
+
+func (s *RootCAContract) Test(ctx contractapi.TransactionContextInterface) {
+	args := make([][]byte, 1)
+	args[0] = []byte("Hello")
+	response := ctx.GetStub().InvokeChaincode("user", args, "")
+	log.Printf("%v", response)
+}
+
 func main() {
 	log.Println("============start chaincode ============")
+	if InitLedger() != nil {
+		log.Panicf("Error Init chaincode: %v", InitLedger())
+	}
 	contract := RootCAContract{}
 	caChaincode, err := contractapi.NewChaincode(&contract)
 	if err != nil {
@@ -242,10 +345,4 @@ func main() {
 		log.Panicf("Error starting  chaincode: %v", err)
 	}
 	log.Println("start RootCA chaincode Successfully!")
-	err = InitLedger()
-	if err != nil {
-		log.Panicf("Error Init chaincode: %v", err)
-	}
-	//caChaincode.DefaultContract = "InitRootCert"
-	log.Println("Init RootCA chaincode Successfully!")
 }

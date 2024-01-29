@@ -83,6 +83,40 @@ type SmartContract struct {
 	contractapi.Contract
 }
 
+// 查询中间证书
+func (s *SmartContract) Read(ctx contractapi.TransactionContextInterface) []byte {
+	//
+	chaincodeArgs := make([][]byte, 1)
+	chaincodeArgs[0] = []byte("1")
+	response := ctx.GetStub().InvokeChaincode("CA", chaincodeArgs, "")
+	return response.GetPayload()
+}
+
+// 撤销证书
+
+func (s *SmartContract) RevokeCert(ctx contractapi.TransactionContextInterface, id, userId string) {
+
+}
+
+// 注册证书
+
+func (s *SmartContract) RegisterCert(ctx contractapi.TransactionContextInterface) {
+	// 查询是否有此用户
+
+	// 调用中间证书
+
+	// 中间证书签名
+
+	// 返回pem编码的证书
+
+}
+
+// 查询证书
+
+func (s *SmartContract) ReadCert(ctx contractapi.TransactionContextInterface, id, userId string) {
+
+}
+
 func main() {
 	userChaincode, err := contractapi.NewChaincode(&SmartContract{})
 	if err != nil {

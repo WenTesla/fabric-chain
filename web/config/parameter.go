@@ -19,12 +19,6 @@ const (
 
 	RequestParameterIsNull = "请求参数为空"
 
-	DatabaseError = "内部数据库错误"
-
-	SuccessWithEnglish = "Success"
-
-	FailWithEnglish = "Fail"
-
 	RequestError = "请求错误"
 
 	UserIsExist = "用户已经存在"
