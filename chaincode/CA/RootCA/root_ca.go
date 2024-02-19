@@ -108,12 +108,15 @@ func (s *RootCAContract) IssueIntermediateCert(ctx contractapi.TransactionContex
 		return "", fmt.Errorf("解析scr请求失败%v", err)
 	}
 	log.Printf("csr:%v\n", *certificateRequest)
-	certificate := conveyCertificateRequestToCertificate(certificateRequest)
 	// 获取时间戳
 	timestamp, _ := ctx.GetStub().GetTxTimestamp()
 	log.Printf("当前交易的时间戳为%d", timestamp.GetSeconds())
+	certificate := conveyCertificateRequestToCertificate(certificateRequest)
 	// 将证书的ID赋予为时间戳
 	certificate.SerialNumber = big.NewInt(timestamp.GetSeconds())
+	// 赋值证书的时间
+	certificate.NotBefore = time.Unix(timestamp.GetSeconds(), 0)
+	certificate.NotAfter = time.Unix(timestamp.GetSeconds(), 0).AddDate(1, 0, 0)
 	// Der编码的
 	certBytes, err := x509.CreateCertificate(
 		rand.Reader,
@@ -169,7 +172,7 @@ func parseRSAPubKey(bytes string) (*rsa.PublicKey, error) {
 // 将Request转为Cert
 
 func conveyCertificateRequestToCertificate(certificateRequest *x509.CertificateRequest) x509.Certificate {
-	var certificate = x509.Certificate{
+	return x509.Certificate{
 		Raw:                         certificateRequest.Raw,
 		RawTBSCertificate:           certificateRequest.RawTBSCertificateRequest,
 		RawSubjectPublicKeyInfo:     certificateRequest.RawSubjectPublicKeyInfo,
@@ -215,7 +218,6 @@ func conveyCertificateRequestToCertificate(certificateRequest *x509.CertificateR
 		CRLDistributionPoints:       nil,
 		PolicyIdentifiers:           nil,
 	}
-	return certificate
 }
 
 // 初始化 上传
@@ -241,19 +243,24 @@ func (s *RootCAContract) VerityCert(ctx contractapi.TransactionContextInterface,
 	// 检查中间证书是否在库中
 	exists, err := s.CertExists(ctx, cert.SerialNumber.String())
 	if err != nil || exists == false {
-		return false, fmt.Errorf("中间证书不在区块链上")
+		return false, fmt.Errorf("中间证书不在区块链上,其证书的序列号为%s", cert.SerialNumber)
 	}
-	// 验证中间证书是否为CA颁发
-	// 创建根证书池
+	log.Printf("中间证书在区块链上,其证书的序列号为%s", cert.SerialNumber)
+	// 低级的API
+	err = cert.CheckSignatureFrom(&rootCsr)
+	if err != nil {
+		return false, err
+	}
+	log.Printf("开始检查证书链")
+	// 检查证书链
 	pool := x509.NewCertPool()
-	// 添加根证书
 	pool.AddCert(&rootCsr)
-	if _, err := cert.Verify(x509.VerifyOptions{
-		Roots: pool,
-	}); err != nil {
-		return false, fmt.Errorf("验证证书失败: " + err.Error())
-	}
-	return true, nil
+	_, err = cert.Verify(x509.VerifyOptions{
+		Roots:         pool,
+		Intermediates: nil,
+	})
+	log.Printf("error:%v", err)
+	return err == nil, err
 }
 
 // 撤销证书
@@ -324,11 +331,22 @@ func (s *RootCAContract) Hello(ctx contractapi.TransactionContextInterface) stri
 	return "hello"
 }
 
-func (s *RootCAContract) Test(ctx contractapi.TransactionContextInterface) {
-	args := make([][]byte, 1)
-	args[0] = []byte("Hello")
-	response := ctx.GetStub().InvokeChaincode("user", args, "")
-	log.Printf("%v", response)
+// 验证中间证书是否为CA颁发
+
+func checkCert(cert *x509.Certificate) (bool, error) {
+
+	// 创建根证书池
+	//pool := x509.NewCertPool()
+	//// 添加根证书
+	//pool.AddCert(&rootCsr)
+	//log.Printf("当前证书池的证书%v", *pool)
+	//if _, err := cert.Verify(x509.VerifyOptions{
+	//	Roots:     pool,
+	//	KeyUsages: nil,
+	//}); err != nil {
+	//	return false, fmt.Errorf("验证证书失败: " + err.Error())
+	//}
+	return true, nil
 }
 
 func main() {

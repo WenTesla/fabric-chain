@@ -20,7 +20,7 @@ type SmartContract struct {
 	contractapi.Contract
 }
 
-// 用户
+// Users structure used
 
 type Users struct {
 	// 唯一Id
