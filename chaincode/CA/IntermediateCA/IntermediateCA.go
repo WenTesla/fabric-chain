@@ -42,7 +42,7 @@ type Certs struct {
 	Subject pkix.Name `json:"subject"`
 	// 颁发者
 	Issuer pkix.Name `json:"issuer"`
-	// 包含的字节数组 csr或者cert
+	// 包含的字节数组 csr或者cert 有点问题
 	Bytes []byte `json:"certBytes"`
 	// 证书的hash值
 	CertHashValue string `json:"certHashValue"`
@@ -58,13 +58,6 @@ const (
 	approved         // 已批准
 	revoked          // 撤销
 )
-
-// 证书的Id
-
-type CertId struct {
-	UserId string
-	Id     string
-}
 
 var key, _ = rsa.GenerateKey(rand.Reader, 1024)
 
@@ -125,16 +118,16 @@ func (I *IntermediateCAContract) IssueCert(ctx contractapi.TransactionContextInt
 
 // 用户向中间CA请求证书 用户Id，csr 保存上区块链上
 
-func (I *IntermediateCAContract) RequestCert(ctx contractapi.TransactionContextInterface, userId, csr string) error {
+func (I *IntermediateCAContract) RequestCert(ctx contractapi.TransactionContextInterface, userId, csr string) (int64, error) {
 	// 查询用户Id是否存在
 	exists, err := I.UserExists(ctx, userId)
 	log.Printf("该用户在区块链上%v", exists)
 	if err != nil || !exists {
-		return fmt.Errorf("该用户Id不在区块链%s\n错误:%v", userId, err)
+		return 0, fmt.Errorf("该用户Id不在区块链%s\n错误:%v", userId, err)
 	}
 	request, err := pareCsr([]byte(csr))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	txTimestamp, _ := ctx.GetStub().GetTxTimestamp()
 	var cert = Certs{
@@ -152,10 +145,10 @@ func (I *IntermediateCAContract) RequestCert(ctx contractapi.TransactionContextI
 	log.Printf("证书信息为%v", cert)
 	certBytes, err := json.Marshal(cert)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	timestamp, _ := ctx.GetStub().GetTxTimestamp()
-	return ctx.GetStub().PutState(strconv.FormatInt(timestamp.GetSeconds(), 10), certBytes)
+	return timestamp.GetSeconds(), ctx.GetStub().PutState(strconv.FormatInt(timestamp.GetSeconds(), 10), certBytes)
 }
 
 // 向根CA调用中间证书来颁发
@@ -248,14 +241,18 @@ func (I *IntermediateCAContract) IssuerCert(ctx contractapi.TransactionContextIn
 	var cert = Certs{}
 	json.Unmarshal(state, &cert)
 	log.Printf("证书%v", cert)
-	// 解析要签名的证书
-	certificate, err := parseX509Cert(cert.Bytes)
+	// 解析要签名的证书 错误
+	csr, err := pareCsr(cert.Bytes)
 	if err != nil {
-		return err
+		return fmt.Errorf("解析证书失败%v", err)
 	}
+	// 将csr转为证书
+	certificate := conveyCertificateRequestToCertificate(csr)
 	// 获取时间戳 并且赋值
 	timestamp, _ := ctx.GetStub().GetTxTimestamp()
-	certificate.SerialNumber = big.NewInt(timestamp.GetSeconds())
+	// 序列号
+	parseInt, _ := strconv.ParseInt(id, 10, 64)
+	certificate.SerialNumber = big.NewInt(parseInt)
 	certificate.NotBefore = time.Unix(timestamp.GetSeconds(), 0)
 	certificate.NotAfter = time.Unix(timestamp.GetSeconds(), 0).AddDate(1, 0, 0)
 	log.Printf("父证书%v", *certificate)
@@ -263,10 +260,11 @@ func (I *IntermediateCAContract) IssuerCert(ctx contractapi.TransactionContextIn
 
 	// 获取签名者的私钥
 	privateKey, _ := parsePrivateKey(keyBytes)
+	log.Printf("开始创建证书")
 	// 创建证书
 	createCertificate, err := x509.CreateCertificate(rand.Reader, certificate, x509Cert, certificate.PublicKey, privateKey)
 	if err != nil {
-		return err
+		return fmt.Errorf("创建证书失败%v", err)
 	}
 	// pem编码
 	log.Printf("创建证书成功,cert字节为:%s", createCertificate)
@@ -284,7 +282,7 @@ func (I *IntermediateCAContract) IssuerCert(ctx contractapi.TransactionContextIn
 	return ctx.GetStub().PutState(strconv.FormatInt(timestamp.GetSeconds(), 10), marshal)
 }
 
-// 获得所有证书信息
+// 获得所有证书信息 错误
 
 func (I *IntermediateCAContract) GetAllCerts(ctx contractapi.TransactionContextInterface) ([]Certs, error) {
 	resultsIterator, err := ctx.GetStub().GetStateByRange("", "")
@@ -303,8 +301,11 @@ func (I *IntermediateCAContract) GetAllCerts(ctx contractapi.TransactionContextI
 		if err != nil {
 			return nil, err
 		}
+		//
+		cert.Bytes = nil
 		certs = append(certs, cert)
 	}
+	log.Printf("返回certs对象:%v", certs)
 	return certs, nil
 }
 
@@ -324,7 +325,31 @@ func (I *IntermediateCAContract) RevokeCert(ctx contractapi.TransactionContextIn
 	}
 	cert.Status = revoked
 	state, _ = json.Marshal(cert)
+	log.Printf("改后的世界状态:%s", state)
 	return ctx.GetStub().PutState(id, state)
+}
+
+// 删除证书
+
+func (I *IntermediateCAContract) Delete(ctx contractapi.TransactionContextInterface, id string) error {
+	return ctx.GetStub().DelState(id)
+}
+
+// 根据证书ID下载证书原件
+
+func (I *IntermediateCAContract) DownloadCert(ctx contractapi.TransactionContextInterface, id string) (string, error) {
+	state, err := ctx.GetStub().GetState(id)
+	if err != nil {
+		return "", err
+	}
+	var cert = Certs{}
+	if err = json.Unmarshal(state, &cert); err != nil {
+		return "", fmt.Errorf("json 序列化失败%v", err)
+	}
+	//if cert.Status != approved {
+	//	return "", fmt.Errorf("该证书未审核通过")
+	//}
+	return string(cert.Bytes), nil
 }
 
 // 拒绝证书 证书的Id
@@ -333,20 +358,12 @@ func RejectCert(ctx contractapi.TransactionContextInterface, id string) error {
 	return ctx.GetStub().DelState(id)
 }
 
-// 将csr转为结构体
-
-func ConveyCsr(request x509.CertificateRequest) (cert Certs) {
-	cert.Subject = request.Subject
-	cert.Version = request.Version
-	return
-}
-
 // 加载x509证书
 
 func parseX509Cert(bytes []byte) (*x509.Certificate, error) {
 	block, _ := pem.Decode(bytes)
 	if block == nil || block.Type != "CERTIFICATE" {
-		return nil, fmt.Errorf("pem证书加载失败,其格式为%s", block.Type)
+		return nil, fmt.Errorf("x509证书加载失败,其格式为%s", block.Type)
 	}
 	return x509.ParseCertificate(block.Bytes)
 }
@@ -361,21 +378,19 @@ func parsePrivateKey(bytes []byte) (*rsa.PrivateKey, error) {
 	return x509.ParsePKCS1PrivateKey(block.Bytes)
 }
 
-// 加载公钥
-
 // 解析csr
 
 func pareCsr(bytes []byte) (*x509.CertificateRequest, error) {
 	block, _ := pem.Decode(bytes)
 	if block == nil || block.Type != "CERTIFICATE REQUEST" {
-		return nil, fmt.Errorf("密钥对格式错误，为%s", block.Type)
+		return nil, fmt.Errorf("csr解析错误，为%s", block.Type)
 	}
 	return x509.ParseCertificateRequest(block.Bytes)
 }
 
 // 将Request转为Cert
 
-func conveyCertificateRequestToCertificate(certificateRequest *x509.CertificateRequest) x509.Certificate {
+func conveyCertificateRequestToCertificate(certificateRequest *x509.CertificateRequest) *x509.Certificate {
 	var certificate = x509.Certificate{
 		Raw:                         certificateRequest.Raw,
 		RawTBSCertificate:           certificateRequest.RawTBSCertificateRequest,
@@ -422,7 +437,7 @@ func conveyCertificateRequestToCertificate(certificateRequest *x509.CertificateR
 		CRLDistributionPoints:       nil,
 		PolicyIdentifiers:           nil,
 	}
-	return certificate
+	return &certificate
 }
 
 func main() {

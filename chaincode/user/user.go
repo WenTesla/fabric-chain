@@ -29,7 +29,7 @@ type Users struct {
 	Password string `json:"password"`
 	// 邮箱
 	Email string `json:"email"`
-	// 是否为CA 0-为普通用户 1-为根CA 2-中间CA 普通用户只拥有申请证书和查看证书权限，而CA审核方拥有查询、撤销、审核申请者身份等权限
+	// 是否为CA 0-为普通用户 1-审计用户 2-管理员
 	IsCA int `json:"isCA"`
 	// 创建时间
 	CreateTime string `json:"createTime"`
@@ -313,15 +313,49 @@ func (s *SmartContract) VerifyPassword(ctx contractapi.TransactionContextInterfa
 	if err != nil {
 		return err
 	}
+	if user.Status != 0 {
+		return fmt.Errorf("用户已被封禁")
+	}
 	if user.Password != fmt.Sprintf("%x", sha256.Sum256([]byte(password))) {
 		return fmt.Errorf("用户密码错误")
 	}
-	return nil
+	return s.UpdateLoginTime(ctx, id)
+}
+
+// 升级用户
+
+func (s *SmartContract) UpgradeUser(ctx contractapi.TransactionContextInterface, id string) error {
+	if exists, _ := s.UserExists(ctx, id); !exists {
+		return fmt.Errorf("该用户Id:%s不存在", id)
+	}
+	bytes, _ := ctx.GetStub().GetState(id)
+	var user Users
+	json.Unmarshal(bytes, &user)
+	if user.IsCA < 2 {
+		user.IsCA += 1
+	}
+	bytes, _ = json.Marshal(user)
+	return ctx.GetStub().PutState(id, bytes)
+}
+
+// 降级用户
+
+func (s *SmartContract) DegradeUser(ctx contractapi.TransactionContextInterface, id string) error {
+	if exists, _ := s.UserExists(ctx, id); !exists {
+		return fmt.Errorf("该用户Id:%s不存在", id)
+	}
+	bytes, _ := ctx.GetStub().GetState(id)
+	var user Users
+	json.Unmarshal(bytes, &user)
+	if user.IsCA > 0 {
+		user.IsCA -= 1
+	}
+	bytes, _ = json.Marshal(user)
+	return ctx.GetStub().PutState(id, bytes)
 }
 
 // 获取历史
 
-// GetHistory returns the chain of custody for an asset since issuance.
 func (s *SmartContract) GetHistory(ctx contractapi.TransactionContextInterface, ID string) ([]HistoryQueryResult, error) {
 	log.Printf("GetHistory: ID %v", ID)
 	exists, err := s.UserExists(ctx, ID)
@@ -366,25 +400,19 @@ func (s *SmartContract) GetHistory(ctx contractapi.TransactionContextInterface, 
 	return records, nil
 }
 
-func (s *SmartContract) CreateUserWithJson(ctx contractapi.TransactionContextInterface, user Users) error {
-	exists, err := s.UserExists(ctx, user.ID)
-	if err != nil {
-		return err
-	}
-	if exists {
-		return fmt.Errorf("the user %s already exists", user.ID)
-	}
+// 修改登录时间
+
+func (s *SmartContract) UpdateLoginTime(ctx contractapi.TransactionContextInterface, id string) error {
+	user, _ := s.ReadUser(ctx, id)
+	// 更新登录时间
+	timestamp, _ := ctx.GetStub().GetTxTimestamp()
+	user.LastLoginTime = strconv.FormatInt(timestamp.GetSeconds(), 10)
 	bytes, err := json.Marshal(user)
 	if err != nil {
 		return err
 	}
-	return ctx.GetStub().PutState(user.ID, bytes)
+	return ctx.GetStub().PutState(id, bytes)
 }
-
-func (s *SmartContract) Hello(ctx contractapi.TransactionContextInterface) string {
-	return "hello"
-}
-
 func main() {
 	userChaincode, err := contractapi.NewChaincode(&SmartContract{})
 	if err != nil {

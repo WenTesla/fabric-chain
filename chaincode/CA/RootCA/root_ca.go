@@ -49,18 +49,11 @@ var rootCsr = x509.Certificate{
 	KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign, //支持签发和吊销中级证书
 }
 
-// 根证书Id
-const rootCertID = "root_cert_id"
-
-// 根证书密钥Id
-const rootCertKeyID = "root_key"
-
 // 根证书和密钥是否匹配
 
 func InitLedger() error {
 	// 是否匹配
-	_, err := tls.X509KeyPair(rootCertBytes, keyBytes)
-	if err != nil {
+	if _, err := tls.X509KeyPair(rootCertBytes, keyBytes); err != nil {
 		return err
 	}
 	fmt.Println("根证书和密钥对匹配成功")
@@ -220,12 +213,6 @@ func conveyCertificateRequestToCertificate(certificateRequest *x509.CertificateR
 	}
 }
 
-// 初始化 上传
-
-func (s *RootCAContract) Init(ctx contractapi.TransactionContextInterface) error {
-	return nil
-}
-
 // 中间证书
 
 // 验证中间证书的有效性
@@ -247,18 +234,19 @@ func (s *RootCAContract) VerityCert(ctx contractapi.TransactionContextInterface,
 	}
 	log.Printf("中间证书在区块链上,其证书的序列号为%s", cert.SerialNumber)
 	// 低级的API
-	err = cert.CheckSignatureFrom(&rootCsr)
-	if err != nil {
-		return false, err
-	}
+	//if err = cert.CheckSignatureFrom(&rootCsr);err != nil {
+	//	return false, fmt.Errorf("CheckSignatureFrom 失败%v", err)
+	//}
 	log.Printf("开始检查证书链")
 	// 检查证书链
 	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(rootCertBytes)
 	pool.AddCert(&rootCsr)
 	_, err = cert.Verify(x509.VerifyOptions{
 		Roots:         pool,
 		Intermediates: nil,
 	})
+	fmt.Printf("%s", pool.Subjects())
 	log.Printf("error:%v", err)
 	return err == nil, err
 }
@@ -327,26 +315,18 @@ func (s *RootCAContract) GetNewCert(ctx contractapi.TransactionContextInterface)
 	return string(kv.GetValue()), nil
 }
 
-func (s *RootCAContract) Hello(ctx contractapi.TransactionContextInterface) string {
-	return "hello"
-}
+// 查看是否有中间证书
 
-// 验证中间证书是否为CA颁发
-
-func checkCert(cert *x509.Certificate) (bool, error) {
-
-	// 创建根证书池
-	//pool := x509.NewCertPool()
-	//// 添加根证书
-	//pool.AddCert(&rootCsr)
-	//log.Printf("当前证书池的证书%v", *pool)
-	//if _, err := cert.Verify(x509.VerifyOptions{
-	//	Roots:     pool,
-	//	KeyUsages: nil,
-	//}); err != nil {
-	//	return false, fmt.Errorf("验证证书失败: " + err.Error())
-	//}
-	return true, nil
+func (s *RootCAContract) CheckIntermediateCert(ctx contractapi.TransactionContextInterface) error {
+	stateByRange, err := ctx.GetStub().GetStateByRange("", "")
+	if err != nil {
+		return err
+	}
+	defer stateByRange.Close()
+	if !stateByRange.HasNext() {
+		return fmt.Errorf("中间证书不存在，请注册中间证书")
+	}
+	return nil
 }
 
 func main() {

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"crypto/x509/pkix"
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"io"
@@ -12,12 +13,65 @@ import (
 	"web/service"
 )
 
-// 创建证书请求
+// 创建证书请求csr
 
 func RegisterCsr(c *gin.Context) {
-	c.PostForm("CN")
-	c.PostForm("")
-
+	form := struct {
+		C            string `form:"C" binding:"required"`
+		ST           string `form:"ST"`
+		L            string `form:"l"`
+		O            string `form:"o"`
+		OU           string `form:"OU"`
+		CN           string `form:"CN"`
+		EmailAddress string `form:"emailAddress"`
+		DnsEmail     string `form:"Dns"`
+	}{}
+	if c.ShouldBind(&form) != nil {
+		c.JSON(http.StatusUnauthorized,
+			model.BaseResponseInstance.FailMsg(config.RequestParameterIsNull),
+		)
+		return
+	}
+	log.Printf("%v", form)
+	// 获取私钥
+	pri, err := c.FormFile("pri")
+	if err != nil {
+		c.JSON(http.StatusBadRequest,
+			model.BaseResponseInstance.FailMsg(config.FileUploadFalse),
+		)
+		return
+	}
+	file, err := pri.Open()
+	priBytes, err := io.ReadAll(file)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized,
+			model.BaseResponseInstance.FailMsg(err.Error()),
+		)
+		return
+	}
+	bytes, err := service.RegisterCsrService(pkix.Name{
+		Country:            []string{form.CN},
+		Organization:       []string{form.O},
+		OrganizationalUnit: []string{form.OU},
+		Locality:           []string{form.L},
+		Province:           []string{},
+		StreetAddress:      []string{form.ST},
+		PostalCode:         []string{""},
+		SerialNumber:       "",
+		CommonName:         form.C,
+		Names:              nil,
+		ExtraNames:         nil,
+	}, []string{form.DnsEmail}, []string{form.EmailAddress}, priBytes)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized,
+			model.BaseResponseInstance.FailMsg(err.Error()),
+		)
+		return
+	}
+	c.Header("Content-Type", "application/text/plain")
+	c.Header("Accept-Length", fmt.Sprintf("%d", len(bytes)))
+	c.Writer.Write(bytes)
+	return
 }
 
 // 申请中间证书
@@ -55,7 +109,7 @@ func RegisterIntermediateCert(c *gin.Context) {
 	return
 }
 
-// 注册证书
+// 注册上传证书
 
 func RegisterCert(c *gin.Context) {
 	csr, err := c.FormFile("csr")
@@ -69,21 +123,37 @@ func RegisterCert(c *gin.Context) {
 	}
 	log.Printf("%s", csrBytes)
 	Id := c.PostForm("userId")
-	err = service.RegisterCertService(Id, csrBytes)
+	bytes, err := service.RegisterCertService(Id, csrBytes)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
 		return
 	}
-	c.JSON(http.StatusOK, model.BaseResponseInstance.Success())
+	c.JSON(http.StatusOK, model.BaseResponseInstance.SuccessData(string(bytes)))
 	return
 }
 
-// 批准中间证书
+// 批准证书
 
 func ApproveCert(c *gin.Context) {
 	id := c.PostForm("id")
-	_, err := service.ApproveCertService(id)
+	if id == "" {
+		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(config.RequestFail))
+		return
+	}
+	bytes, err := service.ApproveCertService(id)
 	if err != nil {
+		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, model.BaseResponseInstance.SuccessData(string(bytes)))
+	return
+}
+
+// 撤销终端证书
+
+func RevokeCert(c *gin.Context) {
+	id := c.PostForm("id")
+	if _, err := service.RevokeCertService(id); err != nil {
 		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
 		return
 	}
@@ -95,8 +165,7 @@ func ApproveCert(c *gin.Context) {
 
 func RevokeIntermediateCert(c *gin.Context) {
 	id := c.PostForm("id")
-	_, err := service.RevokeIntermediateService(id)
-	if err != nil {
+	if _, err := service.RevokeIntermediateService(id); err != nil {
 		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
 		return
 	}
@@ -155,12 +224,12 @@ func AllIntermediateCert(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
 		return
 	}
-	fmt.Println(strings.ReplaceAll(string(bytes), "\\n", ""))
+	//fmt.Println(strings.ReplaceAll(string(bytes), "\\n", ""))
 	//c.JSON(http.StatusOK, model.BaseResponseInstance.SuccessData(fmt.Sprintf("%s", bytes)))
 	c.Header("Content-Type", "application/text/plain")
 	c.Header("Accept-Length", fmt.Sprintf("%d", len(bytes)))
-	//c.Writer.Write(bytes)
-	c.Writer.WriteString(strings.ReplaceAll(string(bytes), "\\n", ""))
+	c.Writer.Write(bytes)
+	//c.Writer.WriteString(strings.ReplaceAll(string(bytes), "\\n", ""))
 	return
 }
 

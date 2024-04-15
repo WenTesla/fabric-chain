@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"web/config"
 	"web/model"
@@ -45,7 +46,7 @@ func RegisterWithCert(c *gin.Context) {
 	//先判空
 	if id == "" || password == "" {
 		c.JSON(http.StatusBadRequest,
-			model.BaseResponseInstance.FailMsg("账号密码为空"),
+			model.BaseResponseInstance.FailMsg(config.UserIdOrPasswordFalse),
 		)
 		return
 	}
@@ -57,8 +58,7 @@ func RegisterWithCert(c *gin.Context) {
 		return
 	}
 	// 用户上传自己的公钥
-	err = service.RegisterService(id, password, email, string(bytes))
-	if err != nil {
+	if err = service.RegisterService(id, password, email, string(bytes)); err != nil {
 		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
 		return
 	}
@@ -75,7 +75,7 @@ func RegisterByGenRSA(c *gin.Context) {
 	//先判空
 	if id == "" || password == "" {
 		c.JSON(http.StatusBadRequest,
-			model.BaseResponseInstance.FailMsg("账号密码为空"),
+			model.BaseResponseInstance.FailMsg(config.RequestParameterIsNull),
 		)
 		return
 	}
@@ -88,6 +88,7 @@ func RegisterByGenRSA(c *gin.Context) {
 	}
 	var err error = nil
 	var bytes []byte = nil
+	log.Printf("id:%s,password:%s,email:%s", id, password, email)
 	err, bytes = service.RegisterServiceWithGenRsaKey(id, password, email)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
@@ -99,40 +100,24 @@ func RegisterByGenRSA(c *gin.Context) {
 	c.Header("Accept-Length", fmt.Sprintf("%d", len(bytes)))
 	c.Writer.Write((bytes))
 	return
-
 }
 
-// 用户登录 必须附带签名
+// 用户登录 必须附带签名（目前不需要签名)
 
 func Login(c *gin.Context) {
 	id := c.PostForm("id")
 	password := c.PostForm("password")
+	var err error = nil
+	var bytes []byte = nil
 	// 单文件
-	file, err := c.FormFile("sign")
-	if err != nil {
-		c.JSON(http.StatusBadRequest,
-			model.BaseResponseInstance.FailMsg(config.FileUploadFalse),
-		)
-		return
-	}
-	log.Println(file.Filename)
-	// 取出数据
-	src, err := file.Open()
-	if err != nil {
-		c.JSON(http.StatusBadRequest,
-			model.BaseResponseInstance.FailMsg(config.FileParseFalse),
-		)
-		return
-	}
-	defer src.Close()
-	bytes, err := io.ReadAll(src)
-	if err != nil {
-		c.JSON(http.StatusBadRequest,
-			model.BaseResponseInstance.FailMsg(config.FileParseFalse),
-		)
-		return
-	}
-
+	//file, _ := c.FormFile("sign")
+	//bytes, err := getFile(file)
+	//if err != nil {
+	//	c.JSON(http.StatusBadRequest,
+	//		model.BaseResponseInstance.FailMsg(config.FileParseFalse),
+	//	)
+	//	return
+	//}
 	//先判空
 	if id == "" || password == "" {
 		c.JSON(http.StatusBadRequest,
@@ -166,7 +151,7 @@ func UserInfo(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
 		return
 	}
-	c.JSON(http.StatusOK, model.BaseResponseInstance.SuccessDataBytes(userBytes))
+	c.JSON(http.StatusOK, model.BaseResponseInstance.SuccessData(string(userBytes)))
 	return
 }
 
@@ -174,11 +159,23 @@ func UserInfo(c *gin.Context) {
 
 func UpdatePassword(c *gin.Context) {
 	// 用户Id
-	userId := c.PostForm("userId")
+	userId := c.PostForm("Id")
 	// 密码
 	password := c.PostForm("password")
 	err := service.UpdateService(userId, password)
 	if err != nil {
+		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, model.BaseResponseInstance.Success())
+	return
+}
+
+// 删除用户
+
+func DeleteUser(c *gin.Context) {
+	id := c.PostForm("id")
+	if err := service.DeleteUserService(id); err != nil {
 		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
 		return
 	}
@@ -257,4 +254,62 @@ func AllUserHistoryInfo(c *gin.Context) {
 	c.Header("Content-Type", "application/json")
 	c.Writer.Write(bytes)
 	return
+}
+
+// 降级为普通用户
+
+func Degrade(c *gin.Context) {
+	id := c.PostForm("id")
+
+	if _, err := service.DegradeService(id); err != nil {
+		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, model.BaseResponseInstance.Success())
+	return
+}
+
+// 升级为CA
+
+func Upgrade(c *gin.Context) {
+	id := c.PostForm("id")
+	if _, err := service.UpgradeService(id); err != nil {
+		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, model.BaseResponseInstance.Success())
+	return
+}
+
+// 禁止用户
+
+func BanUser(c *gin.Context) {
+	id := c.PostForm("id")
+	if err := service.BanUserService(id); err != nil {
+		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, model.BaseResponseInstance.Success())
+	return
+}
+
+func UnBanUser(c *gin.Context) {
+	id := c.PostForm("id")
+	if err := service.UnBanUserService(id); err != nil {
+		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, model.BaseResponseInstance.Success())
+	return
+}
+
+// 获取文件的字节数组
+func getFile(file *multipart.FileHeader) ([]byte, error) {
+	// 取出数据
+	src, err := file.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer src.Close()
+	return io.ReadAll(src)
 }

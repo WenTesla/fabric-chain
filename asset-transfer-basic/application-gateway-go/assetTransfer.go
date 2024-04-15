@@ -88,7 +88,7 @@ func main() {
 	network := gw.GetNetwork(channelName)
 	contract := network.GetContract(chaincodeName)
 
-	initLedger(contract)
+	//initLedger(contract)
 	//getAllAssets(contract)
 	//createAsset(contract)
 	//getAllAssets(contract)
@@ -247,7 +247,9 @@ func transferAssetAsync(contract *client.Contract) {
 func exampleErrorHandling(contract *client.Contract) {
 	fmt.Println("\n--> Submit Transaction: UpdateAsset asset70, asset70 does not exist and should return an error")
 
-	_, err := contract.SubmitTransaction("UpdateAsset", "asset70", "blue", "5", "Tomoko", "300")
+	//_, err := contract.SubmitTransaction("UpdateAsset", "asset70", "blue", "5", "Tomoko", "300")
+	_, err := contract.SubmitTransaction("CreateUser", "admin", "123456", "", "")
+
 	if err == nil {
 		panic("******** FAILED to return an error")
 	}

@@ -1,7 +1,5 @@
 package model
 
-import "web/config"
-
 const (
 	success = "success"
 	fail    = "fail"
@@ -26,7 +24,7 @@ func (*BaseResponse) Success() (response BaseResponse) {
 
 func (*BaseResponse) Fail() (response BaseResponse) {
 	response.StatusCode = -1
-	response.StatusMsg = config.Fail
+	response.StatusMsg = fail
 	return
 }
 

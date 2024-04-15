@@ -6,12 +6,12 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
-	"errors"
 	"fmt"
+	gateway2 "github.com/hyperledger/fabric-protos-go-apiv2/gateway"
+	"google.golang.org/grpc/status"
 	"web/gateway"
 )
 
@@ -51,39 +51,6 @@ func GenRsaKey(bits int) (privateKey, publicKey string) {
 	return
 }
 
-// 解析公钥
-
-func ParsePublicKey(publicKey string) ([]byte, error) {
-	decodeString, err := base64.StdEncoding.DecodeString(publicKey)
-	if err != nil {
-		return nil, err
-	}
-	// 对公钥信息进行编码
-	block := &pem.Block{
-		Type:  "PUBLIC KEY",
-		Bytes: decodeString,
-	}
-	pemData := pem.EncodeToMemory(block)
-	return pemData, nil
-}
-
-// 解析私钥
-
-func ParsePrivateKey(privateKey string) ([]byte, error) {
-	decodeString, err := base64.StdEncoding.DecodeString(privateKey)
-	if err != nil {
-		return nil, err
-	}
-	// 对公钥信息进行编码
-	block := &pem.Block{
-		Type:    "RSA PRIVATE KEY",
-		Headers: map[string]string{},
-		Bytes:   decodeString,
-	}
-	pemData := pem.EncodeToMemory(block)
-	return pemData, nil
-}
-
 // 匹配 RSA 公私密钥
 
 func MatchRSAKey(publicKey string, privateKey string) bool {
@@ -101,20 +68,11 @@ func MatchRSAKey(publicKey string, privateKey string) bool {
 	return key.PublicKey.Equal(pubKey)
 }
 
-// hash密码
-
-func hashPassword(password string) string {
-	hash := sha256.New()
-	hash.Write([]byte(password))
-	bytes := hash.Sum(nil)
-	// 密码加密
-	fmt.Printf("密码为:%x", bytes)
-	return hex.EncodeToString(bytes)
-}
-
 // 注册服务 用户自己提交公钥
 
 func RegisterService(id, password, email, publicKey string) error {
+	// 解析公钥
+	//ParsePublicKey(publicKey)
 	_, err := userContract.SubmitTransaction("CreateUser", id, password, email, publicKey)
 	return err
 }
@@ -124,39 +82,59 @@ func RegisterService(id, password, email, publicKey string) error {
 func RegisterServiceWithGenRsaKey(id, password, email string) (error, []byte) {
 	privateKey, publicKey := GenRsaKey(1024)
 	_, err := userContract.SubmitTransaction("CreateUser", id, password, email, publicKey)
+	statusErr := status.Convert(err)
+	details := statusErr.Details()
+	if len(details) > 0 {
+		fmt.Println("Error Details:")
+		for _, detail := range details {
+			switch detail := detail.(type) {
+			case *gateway2.ErrorDetail:
+				fmt.Printf("- address: %s, mspId: %s, message: %s\n", detail.Address, detail.MspId, detail.Message)
+				return fmt.Errorf("register fail:%v", detail.Message), nil
+			}
+		}
+	}
 	return err, []byte(privateKey)
 }
 
 // 登录 附带 签名
 
 func LoginService(id, password string, signature []byte) error {
-	_, err := userContract.SubmitTransaction("VerifyPassword", id, password)
-	if err != nil {
-		return err
+	if _, err := userContract.SubmitTransaction("VerifyPassword", id, password); err != nil {
+		return handleError(err)
 	}
 	// 验证签名
-	Flag := VerifySignService(id, signature)
-	if Flag == false {
-		return errors.New("签名值错误")
-	}
+	//if Flag := VerifySignService(id, signature); Flag == false {
+	//	return errors.New("签名值错误")
+	//}
 	return nil
 }
 
 // user 信息
 
 func UserInfoService(Id string) ([]byte, error) {
-	return userContract.SubmitTransaction("ReadUser", Id)
+	bytes, err := userContract.SubmitTransaction("ReadUser", Id)
+	if err != nil {
+		return nil, handleError(err)
+	}
+	return bytes, nil
 }
 
 func AllUserInfoService() ([]byte, error) {
-	return userContract.SubmitTransaction("GetAllUsers")
+	bytes, err := userContract.SubmitTransaction("GetAllUsers")
+	if err != nil {
+		return nil, handleError(err)
+	}
+	return bytes, nil
 }
 
 // 修改密码
 
 func UpdateService(Id, password string) error {
-	_, err := userContract.SubmitTransaction("UpdatePassword", Id, password)
-	return err
+	if _, err := userContract.SubmitTransaction("UpdatePassword", Id, password); err != nil {
+		return handleError(err)
+	}
+	return nil
 }
 
 // 签名 后期做成前端签名
@@ -207,9 +185,17 @@ func SignWithRsa(originMessage string, privateKey *rsa.PrivateKey) (signature []
 	hashed := sha256.Sum256([]byte(originMessage))
 	// 签名
 	signature, err = rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA256, hashed[:])
-	if err != nil {
-		fmt.Println("签名失败:", err)
-		return
+	statusErr := status.Convert(err)
+	details := statusErr.Details()
+	if len(details) > 0 {
+		fmt.Println("Error Details:")
+		for _, detail := range details {
+			switch detail := detail.(type) {
+			case *gateway2.ErrorDetail:
+				fmt.Printf("- address: %s, mspId: %s, message: %s\n", detail.Address, detail.MspId, detail.Message)
+				return
+			}
+		}
 	}
 	return
 }
@@ -264,4 +250,50 @@ func Verify(publicKey rsa.PublicKey, data string, sign string) (err error) {
 
 func UsersHistoryService(id string) ([]byte, error) {
 	return userContract.SubmitTransaction("GetHistory", id)
+}
+
+// 降级用户
+
+func DegradeService(id string) ([]byte, error) {
+	return userContract.SubmitTransaction("DegradeUser", id)
+}
+
+// 升级用户
+
+func UpgradeService(id string) ([]byte, error) {
+	return userContract.SubmitTransaction("UpgradeUser", id)
+}
+
+func BanUserService(id string) error {
+	_, err := userContract.SubmitTransaction("BanUser", id)
+	return handleError(err)
+}
+
+func UnBanUserService(id string) error {
+	_, err := userContract.SubmitTransaction("UnblockedUser", id)
+	return handleError(err)
+}
+
+// 删除用户
+
+func DeleteUserService(id string) error {
+	_, err := userContract.SubmitTransaction("DeleteUser", id)
+	return handleError(err)
+}
+
+// 统一的错误处理
+func handleError(err error) error {
+	statusErr := status.Convert(err)
+	details := statusErr.Details()
+	if len(details) > 0 {
+		fmt.Println("Error Details:")
+		for _, detail := range details {
+			switch detail := detail.(type) {
+			case *gateway2.ErrorDetail:
+				fmt.Printf("- address: %s, mspId: %s, message: %s\n", detail.Address, detail.MspId, detail.Message)
+				return fmt.Errorf("%v", detail.Message)
+			}
+		}
+	}
+	return nil
 }
