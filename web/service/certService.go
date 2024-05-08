@@ -1,16 +1,12 @@
 package service
 
 import (
-	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
-	"errors"
 	"fmt"
-	"github.com/hyperledger/fabric-gateway/pkg/client"
-	"google.golang.org/grpc/status"
 	"web/gateway"
 )
 
@@ -21,48 +17,69 @@ var intermediateCertContract = gateway.InitConfigContract("mychannel", "MiddleCA
 // 中间证书注册
 
 func IntermediateCertRegisterService(csr, pub string) ([]byte, error) {
-	return rootCAContract.SubmitTransaction("IssueIntermediateCert", csr, pub)
+	bytes, err := rootCAContract.SubmitTransaction("IssueIntermediateCert", csr, pub)
+	return bytes, handleError(err)
 }
 
 // 注册证书
 
 func RegisterCertService(userId string, csr []byte) ([]byte, error) {
-	return intermediateCertContract.SubmitTransaction("RequestCert", userId, string(csr))
+	bytes, err := intermediateCertContract.SubmitTransaction("RequestCert", userId, string(csr))
+	return bytes, handleError(err)
 }
 
 // 撤销中间证书
 
 func RevokeIntermediateService(id string) ([]byte, error) {
-	return rootCAContract.SubmitTransaction("DeleteCert", id)
+	bytes, err := rootCAContract.SubmitTransaction("DeleteCert", id)
+	return bytes, handleError(err)
 }
 
 // 批准中间证书
 
 func ApproveCertService(id string) ([]byte, error) {
-	return intermediateCertContract.SubmitTransaction("IssuerCert", id)
+	bytes, err := intermediateCertContract.SubmitTransaction("IssuerCert", id)
+	return bytes, handleError(err)
 }
 
 // 撤销终端证书
 
 func RevokeCertService(id string) ([]byte, error) {
-	return intermediateCertContract.SubmitTransaction("RevokeCert", id)
+	bytes, err := intermediateCertContract.SubmitTransaction("RevokeCert", id)
+	return bytes, handleError(err)
+}
+
+func DeleteCertService(id string) ([]byte, error) {
+	bytes, err := intermediateCertContract.SubmitTransaction("Delete", id)
+	return bytes, handleError(err)
+}
+
+// 查看
+func MyCertService(id string) ([]byte, error) {
+	bytes, err := intermediateCertContract.EvaluateTransaction("CertInfoByUserId", id)
+	return bytes, handleError(err)
 }
 
 // 查询全部中间证书
 
 func CertAllService() ([]byte, error) {
-	return rootCAContract.SubmitTransaction("GetAllElem")
+	bytes, err := rootCAContract.EvaluateTransaction("GetAllElem")
+	return bytes, handleError(err)
 }
 
 // 验证证书
 
 func VerityCertService(cert string) (bool, error) {
-	bytes, err := rootCAContract.SubmitTransaction("VerityCert", cert)
+	// 后端先检验
+	if _, err := parseX509Cert([]byte(cert)); err != nil {
+		return false, err
+	}
+	bytes, err := intermediateCertContract.SubmitTransaction("VerityCert", cert)
 	if err != nil {
 		return false, fmt.Errorf("证书错误%v", handleError(err))
 	}
 	if string(bytes) != "True" {
-		return false, fmt.Errorf("证书错误")
+		return false, fmt.Errorf("该证书不在区块链上")
 	}
 	return true, nil
 }
@@ -71,41 +88,13 @@ func VerityCertService(cert string) (bool, error) {
 
 func AllCertService() ([]byte, error) {
 	result, err := intermediateCertContract.EvaluateTransaction("GetAllCerts")
-	if err != nil {
-		switch err := err.(type) {
-		case *client.EndorseError:
-			panic(fmt.Errorf("transaction %s failed to endorse with gRPC status %v: %w", err.TransactionID, status.Code(err), err))
-		case *client.SubmitError:
-			panic(fmt.Errorf("transaction %s failed to submit to the orderer with gRPC status %v: %w", err.TransactionID, status.Code(err), err))
-		case *client.CommitStatusError:
-			if errors.Is(err, context.DeadlineExceeded) {
-				panic(fmt.Errorf("timeout waiting for transaction %s commit status: %w", err.TransactionID, err))
-			} else {
-				panic(fmt.Errorf("transaction %s failed to obtain commit status with gRPC status %v: %w", err.TransactionID, status.Code(err), err))
-			}
-		case *client.CommitError:
-			panic(fmt.Errorf("transaction %s failed to commit with status %d: %w", err.TransactionID, int32(err.Code), err))
-
-		default:
-			panic(err)
-		}
-	}
-	return result, err
+	return result, handleError(err)
 }
 
 // 解析服务
 
 func ParseCertService(certBytes []byte) (*x509.Certificate, error) {
 	return parseX509Cert(certBytes)
-}
-
-type certInfo struct {
-	// 序列号
-	Id string
-	// 主题信息
-
-	// 签发者信息
-
 }
 
 // 解析x509证书的信息
@@ -173,5 +162,3 @@ func parsePrivateKey(bytes []byte) (*rsa.PrivateKey, error) {
 	}
 	return x509.ParsePKCS1PrivateKey(block.Bytes)
 }
-
-// 编码

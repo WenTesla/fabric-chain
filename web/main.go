@@ -62,6 +62,8 @@ func loadRouter(r *gin.Engine) {
 	r.POST("/api/user/sign", controller.Sign)
 	// 删除用户
 	r.POST("/api/user/delete", controller.DeleteUser)
+	// 获取用户角色
+	r.POST("/api/user/role", controller.UserRole)
 	// 生成csr
 	r.POST("/api/cert/csr", controller.RegisterCsr)
 	// 注册中间证书
@@ -80,8 +82,14 @@ func loadRouter(r *gin.Engine) {
 	r.POST("/api/cert/approve", controller.ApproveCert)
 	// 撤销终端证书
 	r.POST("/api/cert/revoke", controller.RevokeCert)
+	//删除终端证书
+	r.POST("/api/cert/delete", controller.DeleteCert)
 	// 所有终端证书信息
 	r.POST("/api/cert/allCert", controller.AllCert)
+	// 用户申请的终端证书
+	r.POST("/api/cert/myCert", controller.MyCert)
+	// 下载证书
+
 	//其他
 	r.NoRoute(func(c *gin.Context) {
 		c.JSON(http.StatusNotFound, model.BaseResponseInstance.FailMsg("页面不存在"))

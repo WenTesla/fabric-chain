@@ -43,7 +43,32 @@ type Certs struct {
 	// 颁发者
 	Issuer pkix.Name `json:"issuer"`
 	// 包含的字节数组 csr或者cert 有点问题
-	Bytes []byte `json:"certBytes"`
+	Bytes string `json:"certBytes"`
+	// 证书的hash值
+	CertHashValue string `json:"certHashValue"`
+	// 所拥有的证书的用户的Id
+	UserId string `json:"userId"`
+	// 状态
+	Status int `json:"status"`
+	// 颁发者的Id
+	IssuerId string `json:"issuerId"`
+}
+
+type CertInfo struct {
+	// 证书的主键
+	CertId string `json:"certId"`
+	// 版本号
+	Version int `json:"version"`
+	// 开始时间
+	BeginDate string `json:"beginDate"`
+	// 结束时间
+	EndDate string `json:"endDate"`
+	// subject
+	Subject string `json:"subject"`
+	// 颁发者
+	Issuer string `json:"issuer"`
+	// 包含的字节数组 csr或者cert 有点问题
+	Bytes string `json:"certBytes"`
 	// 证书的hash值
 	CertHashValue string `json:"certHashValue"`
 	// 所拥有的证书的用户的Id
@@ -56,7 +81,8 @@ type Certs struct {
 const (
 	reviewing = iota // 审核中
 	approved         // 已批准
-	revoked          // 撤销
+	rejected
+	revoked = -1 // 撤销
 )
 
 var key, _ = rsa.GenerateKey(rand.Reader, 1024)
@@ -94,12 +120,6 @@ func (*IntermediateCAContract) Request(ctx contractapi.TransactionContextInterfa
 	return nil
 }
 
-// 初始化
-
-func Init() {
-
-}
-
 // 颁发用户的证书
 
 func (I *IntermediateCAContract) IssueCert(ctx contractapi.TransactionContextInterface, id string) error {
@@ -112,7 +132,6 @@ func (I *IntermediateCAContract) IssueCert(ctx contractapi.TransactionContextInt
 	if err != nil {
 		return err
 	}
-
 	return nil
 }
 
@@ -130,6 +149,7 @@ func (I *IntermediateCAContract) RequestCert(ctx contractapi.TransactionContextI
 		return 0, err
 	}
 	txTimestamp, _ := ctx.GetStub().GetTxTimestamp()
+	// 这里时间处理不好
 	var cert = Certs{
 		CertId:        strconv.FormatInt(txTimestamp.GetSeconds(), 10),
 		Version:       request.Version,
@@ -137,7 +157,7 @@ func (I *IntermediateCAContract) RequestCert(ctx contractapi.TransactionContextI
 		EndDate:       time.Time{},
 		Subject:       request.Subject,
 		Issuer:        pkix.Name{},
-		Bytes:         []byte(csr),
+		Bytes:         (csr),
 		CertHashValue: fmt.Sprintf("%x", sha256.Sum256([]byte(csr))),
 		UserId:        userId,
 		Status:        0,
@@ -197,30 +217,6 @@ func (*IntermediateCAContract) CertExists(ctx contractapi.TransactionContextInte
 	return true, nil
 }
 
-// 生成证书请求
-
-func CreateCsr(subject pkix.Name, dns, emails []string, pri *rsa.PrivateKey) ([]byte, error) {
-	certificateRequest := x509.CertificateRequest{
-		Raw:                      nil,
-		RawTBSCertificateRequest: nil,
-		RawSubjectPublicKeyInfo:  nil,
-		RawSubject:               nil,
-		Version:                  3,
-		Signature:                nil,
-		SignatureAlgorithm:       0,
-		PublicKeyAlgorithm:       0,
-		PublicKey:                nil,
-		Subject:                  subject,
-		Extensions:               nil,
-		ExtraExtensions:          nil,
-		DNSNames:                 dns,
-		EmailAddresses:           emails,
-		IPAddresses:              nil,
-		URIs:                     nil,
-	}
-	return x509.CreateCertificateRequest(rand.Reader, &certificateRequest, pri)
-}
-
 // 颁发证书
 
 func (I *IntermediateCAContract) IssuerCert(ctx contractapi.TransactionContextInterface, id string) error {
@@ -241,8 +237,12 @@ func (I *IntermediateCAContract) IssuerCert(ctx contractapi.TransactionContextIn
 	var cert = Certs{}
 	json.Unmarshal(state, &cert)
 	log.Printf("证书%v", cert)
+	// 如果证书已批准，则报错
+	if cert.Status != reviewing {
+		return fmt.Errorf("该证书不在审核状态！")
+	}
 	// 解析要签名的证书 错误
-	csr, err := pareCsr(cert.Bytes)
+	csr, err := pareCsr([]byte(cert.Bytes))
 	if err != nil {
 		return fmt.Errorf("解析证书失败%v", err)
 	}
@@ -277,33 +277,46 @@ func (I *IntermediateCAContract) IssuerCert(ctx contractapi.TransactionContextIn
 	// 改变证书状态并存入
 	cert.CertId = strconv.FormatInt(timestamp.GetSeconds(), 10)
 	cert.Status = approved
+	cert.Bytes = string(certBytes)
 	cert.CertHashValue = fmt.Sprintf("%x", sha256.Sum256(certBytes))
+	cert.BeginDate = timestamp.AsTime()
+	cert.EndDate = timestamp.AsTime().AddDate(1, 0, 0)
 	marshal, _ := json.Marshal(cert)
+	// 删除证书Id
+	ctx.GetStub().DelState(id)
 	return ctx.GetStub().PutState(strconv.FormatInt(timestamp.GetSeconds(), 10), marshal)
 }
 
 // 获得所有证书信息 错误
 
-func (I *IntermediateCAContract) GetAllCerts(ctx contractapi.TransactionContextInterface) ([]Certs, error) {
+func (I *IntermediateCAContract) GetAllCerts(ctx contractapi.TransactionContextInterface) ([]CertInfo, error) {
 	resultsIterator, err := ctx.GetStub().GetStateByRange("", "")
 	if err != nil {
 		return nil, err
 	}
 	defer resultsIterator.Close()
-	var certs []Certs
+	var certs []CertInfo
 	for resultsIterator.HasNext() {
 		queryResponse, err := resultsIterator.Next()
 		if err != nil {
 			return nil, err
 		}
 		var cert Certs
-		err = json.Unmarshal(queryResponse.Value, &cert)
-		if err != nil {
-			return nil, err
+		json.Unmarshal(queryResponse.GetValue(), &cert)
+		var certInfo = CertInfo{
+			CertId:    cert.CertId,
+			Version:   cert.Version,
+			BeginDate: strconv.FormatInt(cert.BeginDate.Unix(), 10),
+			EndDate:   strconv.FormatInt(cert.EndDate.Unix(), 10),
+			//Subject:       cert.Subject.Organization[0],
+			//Issuer:        cert.Issuer.Organization[0],
+			Bytes:         cert.Bytes,
+			CertHashValue: cert.CertHashValue,
+			UserId:        cert.UserId,
+			Status:        cert.Status,
 		}
-		//
-		cert.Bytes = nil
-		certs = append(certs, cert)
+		log.Printf("cert:%v\n", cert)
+		certs = append(certs, certInfo)
 	}
 	log.Printf("返回certs对象:%v", certs)
 	return certs, nil
@@ -312,8 +325,6 @@ func (I *IntermediateCAContract) GetAllCerts(ctx contractapi.TransactionContextI
 // 撤销证书(软删除)
 
 func (I *IntermediateCAContract) RevokeCert(ctx contractapi.TransactionContextInterface, id string) error {
-	// 检查用户权限
-
 	// 调用证书
 	state, err := ctx.GetStub().GetState(id)
 	if err != nil {
@@ -346,9 +357,9 @@ func (I *IntermediateCAContract) DownloadCert(ctx contractapi.TransactionContext
 	if err = json.Unmarshal(state, &cert); err != nil {
 		return "", fmt.Errorf("json 序列化失败%v", err)
 	}
-	//if cert.Status != approved {
-	//	return "", fmt.Errorf("该证书未审核通过")
-	//}
+	if cert.Status != approved {
+		return "", fmt.Errorf("该证书未审核通过")
+	}
 	return string(cert.Bytes), nil
 }
 
@@ -356,6 +367,93 @@ func (I *IntermediateCAContract) DownloadCert(ctx contractapi.TransactionContext
 
 func RejectCert(ctx contractapi.TransactionContextInterface, id string) error {
 	return ctx.GetStub().DelState(id)
+}
+
+// 验证终端证书
+
+func (I *IntermediateCAContract) VerityCert(ctx contractapi.TransactionContextInterface, certBytes string) (string, error) {
+	resultsIterator, err := ctx.GetStub().GetStateByRange("", "")
+	if err != nil {
+		return "false", err
+	}
+	defer resultsIterator.Close()
+	for resultsIterator.HasNext() {
+		queryResponse, err := resultsIterator.Next()
+		if err != nil {
+			return "false", err
+		}
+		var cert Certs
+		json.Unmarshal(queryResponse.GetValue(), &cert)
+		if cert.Status == revoked {
+			return "false", fmt.Errorf("该证书已被撤销")
+		}
+		log.Printf("cert:%s", cert.Bytes)
+		log.Printf("Bytes:%s", certBytes)
+		log.Printf("%s", bytes.Equal([]byte(certBytes), []byte(cert.Bytes)))
+		// 比较hash值
+		if cert.CertHashValue == fmt.Sprintf("%x", sha256.Sum256([]byte(certBytes))) {
+			log.Printf("该证书在区块链上%s", cert.CertId)
+			return "true", nil
+		}
+		// 比较Id
+
+	}
+	return "true", nil
+}
+
+// 查看该用户id对应的证书
+
+func (I *IntermediateCAContract) CertUserId(ctx contractapi.TransactionContextInterface, id string) (string, error) {
+	resultsIterator, err := ctx.GetStub().GetStateByRange("", "")
+	if err != nil {
+		return "false", err
+	}
+	defer resultsIterator.Close()
+	for resultsIterator.HasNext() {
+		queryResponse, err := resultsIterator.Next()
+		if err != nil {
+			return "false", err
+		}
+		var cert Certs
+		json.Unmarshal(queryResponse.GetValue(), &cert)
+		if cert.UserId == id {
+			return cert.Bytes, nil
+		}
+	}
+	return "", fmt.Errorf("该用户id未注册证书")
+}
+
+// 根据用户Id查看证书对应的信息
+
+func (I *IntermediateCAContract) CertInfoByUserId(ctx contractapi.TransactionContextInterface, id string) ([]*CertInfo, error) {
+	resultsIterator, err := ctx.GetStub().GetStateByRange("", "")
+	if err != nil {
+		return nil, err
+	}
+	defer resultsIterator.Close()
+	var certs []*CertInfo
+	for resultsIterator.HasNext() {
+		queryResponse, err := resultsIterator.Next()
+		if err != nil {
+			return nil, err
+		}
+		var cert Certs
+		json.Unmarshal(queryResponse.GetValue(), &cert)
+		var certInfo = CertInfo{
+			CertId:        cert.CertId,
+			Version:       cert.Version,
+			BeginDate:     strconv.FormatInt(cert.BeginDate.Unix(), 10),
+			EndDate:       strconv.FormatInt(cert.EndDate.Unix(), 10),
+			Bytes:         cert.Bytes,
+			CertHashValue: cert.CertHashValue,
+			UserId:        cert.UserId,
+			Status:        cert.Status,
+		}
+		if certInfo.UserId == id {
+			certs = append(certs, &certInfo)
+		}
+	}
+	return certs, nil
 }
 
 // 加载x509证书

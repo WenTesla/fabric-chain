@@ -183,6 +183,19 @@ func DeleteUser(c *gin.Context) {
 	return
 }
 
+// 获取用户角色
+
+func UserRole(c *gin.Context) {
+	id := c.PostForm("id")
+	if bytes, err := service.UserRoleService(id); err != nil {
+		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
+		return
+	} else {
+		c.JSON(http.StatusOK, model.BaseResponseInstance.SuccessData(string(bytes)))
+	}
+	return
+}
+
 // 签名
 
 func Sign(c *gin.Context) {

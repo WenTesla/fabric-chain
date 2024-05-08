@@ -72,9 +72,12 @@ func MatchRSAKey(publicKey string, privateKey string) bool {
 
 func RegisterService(id, password, email, publicKey string) error {
 	// 解析公钥
-	//ParsePublicKey(publicKey)
+
+	//if _, err := LoadPublicKey([]byte(publicKey)); err != nil {
+	//	return err
+	//}
 	_, err := userContract.SubmitTransaction("CreateUser", id, password, email, publicKey)
-	return err
+	return handleError(err)
 }
 
 // 注册并且生成密钥
@@ -279,6 +282,11 @@ func UnBanUserService(id string) error {
 func DeleteUserService(id string) error {
 	_, err := userContract.SubmitTransaction("DeleteUser", id)
 	return handleError(err)
+}
+
+func UserRoleService(id string) ([]byte, error) {
+	bytes, err := userContract.SubmitTransaction("UserRole", id)
+	return bytes, handleError(err)
 }
 
 // 统一的错误处理

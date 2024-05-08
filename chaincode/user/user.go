@@ -413,6 +413,18 @@ func (s *SmartContract) UpdateLoginTime(ctx contractapi.TransactionContextInterf
 	}
 	return ctx.GetStub().PutState(id, bytes)
 }
+
+// 获取用户的角色
+
+func (s *SmartContract) UserRole(ctx contractapi.TransactionContextInterface, id string) (int, error) {
+	bytes, err := ctx.GetStub().GetState(id)
+	if err != nil {
+		return 0, err
+	}
+	var user Users
+	json.Unmarshal(bytes, &user)
+	return user.IsCA, nil
+}
 func main() {
 	userChaincode, err := contractapi.NewChaincode(&SmartContract{})
 	if err != nil {

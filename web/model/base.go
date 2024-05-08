@@ -11,7 +11,7 @@ type BaseResponse struct {
 	// 状态响应信息
 	StatusMsg string `json:"status_msg,omitempty"`
 	// 数据
-	Data any `json:"data,omitempty"`
+	Data any `json:"data"`
 }
 
 var BaseResponseInstance = BaseResponse{}

@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"strings"
 	"web/config"
 	"web/model"
 	"web/service"
@@ -80,7 +79,7 @@ func RegisterIntermediateCert(c *gin.Context) {
 	csr, err := c.FormFile("csr")
 	pub, err := c.FormFile("pub")
 	if err != nil {
-		c.JSON(http.StatusBadRequest,
+		c.JSON(http.StatusOK,
 			model.BaseResponseInstance.FailMsg(config.FileUploadFalse),
 		)
 		return
@@ -181,7 +180,8 @@ func AllCert(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
 		return
 	}
-	c.Writer.WriteString(strings.ReplaceAll(string(bytes), "\\n", ""))
+	//c.Writer.WriteString(strings.ReplaceAll(string(bytes), "\\n", ""))
+	c.Writer.Write(bytes)
 	return
 }
 
@@ -252,4 +252,30 @@ func CertInfo(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, model.BaseResponseInstance.SuccessData(certificate))
 	return
+}
+
+// 删除证书
+
+func DeleteCert(c *gin.Context) {
+	id := c.PostForm("id")
+	if _, err := service.DeleteCertService(id); err != nil {
+		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, model.BaseResponseInstance.Success())
+	return
+}
+
+// 用户自己的证书
+
+func MyCert(c *gin.Context) {
+	id := c.PostForm("id")
+	if bytes, err := service.MyCertService(id); err != nil {
+		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
+		return
+	} else {
+		c.Writer.Write(bytes)
+	}
+	return
+
 }
