@@ -88,8 +88,8 @@ func loadRouter(r *gin.Engine) {
 	r.POST("/api/cert/allCert", controller.AllCert)
 	// 用户申请的终端证书
 	r.POST("/api/cert/myCert", controller.MyCert)
-	// 下载证书
-
+	// 生成RSA公钥密钥
+	r.POST("/api/gen", controller.GenRSA)
 	//其他
 	r.NoRoute(func(c *gin.Context) {
 		c.JSON(http.StatusNotFound, model.BaseResponseInstance.FailMsg("页面不存在"))

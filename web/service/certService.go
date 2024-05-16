@@ -37,8 +37,8 @@ func RevokeIntermediateService(id string) ([]byte, error) {
 
 // 批准中间证书
 
-func ApproveCertService(id string) ([]byte, error) {
-	bytes, err := intermediateCertContract.SubmitTransaction("IssuerCert", id)
+func ApproveCertService(id, userId, issuerId, certId, pri string) ([]byte, error) {
+	bytes, err := intermediateCertContract.SubmitTransaction("IssuerCert", id, userId, issuerId, certId, pri)
 	return bytes, handleError(err)
 }
 
@@ -55,6 +55,7 @@ func DeleteCertService(id string) ([]byte, error) {
 }
 
 // 查看
+
 func MyCertService(id string) ([]byte, error) {
 	bytes, err := intermediateCertContract.EvaluateTransaction("CertInfoByUserId", id)
 	return bytes, handleError(err)
@@ -157,8 +158,21 @@ func RegisterCsrService(subject pkix.Name, dns, emails []string, pki []byte) ([]
 
 func parsePrivateKey(bytes []byte) (*rsa.PrivateKey, error) {
 	block, _ := pem.Decode(bytes)
-	if block == nil || block.Type != "RSA PRIVATE KEY" {
+	if block == nil {
 		return nil, fmt.Errorf("密钥对格式错误，为%s", block.Type)
 	}
-	return x509.ParsePKCS1PrivateKey(block.Bytes)
+
+	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err == nil {
+		return privateKey, nil
+	}
+	pkcs8PrivateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	switch pri := pkcs8PrivateKey.(type) {
+	case *rsa.PrivateKey:
+		return pri, nil
+	}
+	return nil, fmt.Errorf("无法解析RSA公钥: %v", err)
 }

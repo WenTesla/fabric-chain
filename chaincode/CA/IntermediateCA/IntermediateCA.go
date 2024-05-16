@@ -9,7 +9,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"github.com/hyperledger/fabric-chaincode-go/shim"
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
@@ -75,14 +74,17 @@ type CertInfo struct {
 	UserId string `json:"userId"`
 	// 状态
 	Status int `json:"status"`
+	// 颁发者Id
+	// 颁发者的Id
+	IssuerId string `json:"issuerId"`
 }
 
 // 状态
 const (
 	reviewing = iota // 审核中
 	approved         // 已批准
-	rejected
-	revoked = -1 // 撤销
+	revoked          // 撤销
+	rejected  = -1
 )
 
 var key, _ = rsa.GenerateKey(rand.Reader, 1024)
@@ -106,18 +108,6 @@ var interCsr = &x509.Certificate{
 	MaxPathLen:            0,
 	MaxPathLenZero:        true,
 	KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-}
-
-// 向根CA申请中间证书
-
-func (*IntermediateCAContract) Request(ctx contractapi.TransactionContextInterface) error {
-	// 调用根证书的链码
-	response := ctx.GetStub().InvokeChaincode("RootCA", nil, "")
-	if response.Status == shim.ERROR || response.Status == shim.ERRORTHRESHOLD {
-		return errors.New("调用RootCA链码失败")
-	}
-	log.Println("调用成功")
-	return nil
 }
 
 // 颁发用户的证书
@@ -145,16 +135,16 @@ func (I *IntermediateCAContract) RequestCert(ctx contractapi.TransactionContextI
 		return 0, fmt.Errorf("该用户Id不在区块链%s\n错误:%v", userId, err)
 	}
 	request, err := pareCsr([]byte(csr))
+	fmt.Sprintf("%s", request.Subject)
 	if err != nil {
 		return 0, err
 	}
 	txTimestamp, _ := ctx.GetStub().GetTxTimestamp()
-	// 这里时间处理不好
 	var cert = Certs{
 		CertId:        strconv.FormatInt(txTimestamp.GetSeconds(), 10),
 		Version:       request.Version,
-		BeginDate:     time.Time{},
-		EndDate:       time.Time{},
+		BeginDate:     txTimestamp.AsTime(),
+		EndDate:       txTimestamp.AsTime().AddDate(1, 0, 0),
 		Subject:       request.Subject,
 		Issuer:        pkix.Name{},
 		Bytes:         (csr),
@@ -171,11 +161,54 @@ func (I *IntermediateCAContract) RequestCert(ctx contractapi.TransactionContextI
 	return timestamp.GetSeconds(), ctx.GetStub().PutState(strconv.FormatInt(timestamp.GetSeconds(), 10), certBytes)
 }
 
+// 用户向中间CA请求证书 用户Id，csr 保存上区块链上
+
+//func (I *IntermediateCAContract) Request(ctx contractapi.TransactionContextInterface, userId, csr string) (int64, error) {
+//	// 查询用户Id是否存在
+//	exists, err := I.UserExists(ctx, userId)
+//	log.Printf("该用户在区块链上%v", exists)
+//	if err != nil || !exists {
+//		return 0, fmt.Errorf("该用户Id不在区块链%s\n错误:%v", userId, err)
+//	}
+//	request, err := pareCsr([]byte(csr))
+//	if err != nil {
+//		return 0, err
+//	}
+//	//log.Printf("CSR为%v", request)
+//	log.Printf("CSR的Subject：%s", request.Subject)
+//	txTimestamp, _ := ctx.GetStub().GetTxTimestamp()
+//	var cert = Certs{
+//		CertId:        strconv.FormatInt(txTimestamp.GetSeconds(), 10),
+//		Version:       request.Version,
+//		BeginDate:     txTimestamp.AsTime(),
+//		EndDate:       txTimestamp.AsTime().AddDate(0, 1, 0),
+//		Subject:       request.Subject,
+//		Issuer:        pkix.Name{},
+//		Bytes:         (csr),
+//		CertHashValue: fmt.Sprintf("%x", sha256.Sum256([]byte(csr))),
+//		UserId:        userId,
+//		Status:        0,
+//	}
+//	log.Printf("证书信息为%v", cert)
+//	certBytes, err := json.Marshal(cert)
+//	if err != nil {
+//		return 0, err
+//	}
+//	timestamp, _ := ctx.GetStub().GetTxTimestamp()
+//	return timestamp.GetSeconds(), ctx.GetStub().PutState(strconv.FormatInt(timestamp.GetSeconds(), 10), certBytes)
+//}
+
 // 向根CA调用中间证书来颁发
 
-func (*IntermediateCAContract) ReadIntermediateCert(ctx contractapi.TransactionContextInterface) ([]byte, error) {
-	args := make([][]byte, 1)
-	args[0] = []byte("GetNewCert")
+func (*IntermediateCAContract) ReadIntermediateCert(ctx contractapi.TransactionContextInterface, id string) ([]byte, error) {
+	args := [][]byte{[]byte("GetCert"), []byte(id)}
+	return ctx.GetStub().InvokeChaincode("RootCA", args, "").Payload, nil
+}
+
+// 向根CA调用中间证书对应的私钥
+
+func (*IntermediateCAContract) ReadIntermediateKey(ctx contractapi.TransactionContextInterface) ([]byte, error) {
+	args := [][]byte{[]byte("GetKey"), []byte("11")}
 	return ctx.GetStub().InvokeChaincode("RootCA", args, "").Payload, nil
 }
 
@@ -217,18 +250,26 @@ func (*IntermediateCAContract) CertExists(ctx contractapi.TransactionContextInte
 	return true, nil
 }
 
-// 颁发证书
+// 颁发证书 需要中间证书的私钥
 
-func (I *IntermediateCAContract) IssuerCert(ctx contractapi.TransactionContextInterface, id string) error {
+func (I *IntermediateCAContract) IssuerCert(ctx contractapi.TransactionContextInterface, id, userId, issuerId, InterCertId, pri string) error {
+	// 错误判断
+
 	// 提取中间证书
-	certBytes, _ := I.ReadIntermediateCert(ctx)
+	certBytes, _ := I.ReadIntermediateCert(ctx, InterCertId)
 	// 解析中间证书
 	x509Cert, err := parseX509Cert(certBytes)
 	if err != nil {
-		return err
+		return fmt.Errorf("解析中间失败%v", err)
+	}
+	log.Printf("x509Cert的颁发者:%v", x509Cert.Issuer)
+	// 提取中间证书对应的私钥
+	publicKey, err := GetPublicKey(ctx, userId)
+	if err != nil {
+		return fmt.Errorf("获取公钥失败%v", err)
 	}
 	// 添加中间证书
-	log.Printf("证书信息:%v", *x509Cert)
+	//log.Printf("证书信息:%v", *x509Cert)
 	// 提取证书的csr
 	state, err := ctx.GetStub().GetState(id)
 	if err != nil {
@@ -236,7 +277,7 @@ func (I *IntermediateCAContract) IssuerCert(ctx contractapi.TransactionContextIn
 	}
 	var cert = Certs{}
 	json.Unmarshal(state, &cert)
-	log.Printf("证书%v", cert)
+	//log.Printf("证书%v", cert)
 	// 如果证书已批准，则报错
 	if cert.Status != reviewing {
 		return fmt.Errorf("该证书不在审核状态！")
@@ -256,18 +297,19 @@ func (I *IntermediateCAContract) IssuerCert(ctx contractapi.TransactionContextIn
 	certificate.NotBefore = time.Unix(timestamp.GetSeconds(), 0)
 	certificate.NotAfter = time.Unix(timestamp.GetSeconds(), 0).AddDate(1, 0, 0)
 	log.Printf("父证书%v", *certificate)
-	// 获取证书的公钥
-
-	// 获取签名者的私钥
-	privateKey, _ := parsePrivateKey(keyBytes)
+	// 获取中间证书的私钥
+	privateKey, err := parsePrivateKey([]byte(pri))
+	if err != nil {
+		return fmt.Errorf("获取私钥失败%v", err)
+	}
 	log.Printf("开始创建证书")
 	// 创建证书
-	createCertificate, err := x509.CreateCertificate(rand.Reader, certificate, x509Cert, certificate.PublicKey, privateKey)
+	createCertificate, err := x509.CreateCertificate(rand.Reader, certificate, x509Cert, publicKey, privateKey)
 	if err != nil {
 		return fmt.Errorf("创建证书失败%v", err)
 	}
 	// pem编码
-	log.Printf("创建证书成功,cert字节为:%s", createCertificate)
+	//log.Printf("创建证书成功,cert字节为:%s", createCertificate)
 	pemBytes := pem.EncodeToMemory(&pem.Block{
 		Type:    "CERTIFICATE",
 		Headers: nil,
@@ -277,10 +319,12 @@ func (I *IntermediateCAContract) IssuerCert(ctx contractapi.TransactionContextIn
 	// 改变证书状态并存入
 	cert.CertId = strconv.FormatInt(timestamp.GetSeconds(), 10)
 	cert.Status = approved
-	cert.Bytes = string(certBytes)
+	cert.Bytes = string(pemBytes)
 	cert.CertHashValue = fmt.Sprintf("%x", sha256.Sum256(certBytes))
 	cert.BeginDate = timestamp.AsTime()
 	cert.EndDate = timestamp.AsTime().AddDate(1, 0, 0)
+	cert.Issuer = x509Cert.Issuer
+	cert.IssuerId = issuerId
 	marshal, _ := json.Marshal(cert)
 	// 删除证书Id
 	ctx.GetStub().DelState(id)
@@ -304,18 +348,19 @@ func (I *IntermediateCAContract) GetAllCerts(ctx contractapi.TransactionContextI
 		var cert Certs
 		json.Unmarshal(queryResponse.GetValue(), &cert)
 		var certInfo = CertInfo{
-			CertId:    cert.CertId,
-			Version:   cert.Version,
-			BeginDate: strconv.FormatInt(cert.BeginDate.Unix(), 10),
-			EndDate:   strconv.FormatInt(cert.EndDate.Unix(), 10),
-			//Subject:       cert.Subject.Organization[0],
-			//Issuer:        cert.Issuer.Organization[0],
+			CertId:        cert.CertId,
+			Version:       cert.Version,
+			BeginDate:     strconv.FormatInt(cert.BeginDate.Unix(), 10),
+			EndDate:       strconv.FormatInt(cert.EndDate.Unix(), 10),
+			Subject:       cert.Subject.String(),
+			Issuer:        cert.Issuer.String(),
 			Bytes:         cert.Bytes,
 			CertHashValue: cert.CertHashValue,
 			UserId:        cert.UserId,
 			Status:        cert.Status,
+			IssuerId:      cert.IssuerId,
 		}
-		log.Printf("cert:%v\n", cert)
+		log.Printf("certInfo:%v\n", certInfo)
 		certs = append(certs, certInfo)
 	}
 	log.Printf("返回certs对象:%v", certs)
@@ -444,10 +489,13 @@ func (I *IntermediateCAContract) CertInfoByUserId(ctx contractapi.TransactionCon
 			Version:       cert.Version,
 			BeginDate:     strconv.FormatInt(cert.BeginDate.Unix(), 10),
 			EndDate:       strconv.FormatInt(cert.EndDate.Unix(), 10),
+			Subject:       cert.Subject.String(),
+			Issuer:        cert.Issuer.String(),
 			Bytes:         cert.Bytes,
 			CertHashValue: cert.CertHashValue,
 			UserId:        cert.UserId,
 			Status:        cert.Status,
+			IssuerId:      cert.IssuerId,
 		}
 		if certInfo.UserId == id {
 			certs = append(certs, &certInfo)
@@ -470,10 +518,22 @@ func parseX509Cert(bytes []byte) (*x509.Certificate, error) {
 
 func parsePrivateKey(bytes []byte) (*rsa.PrivateKey, error) {
 	block, _ := pem.Decode(bytes)
-	if block == nil || block.Type != "RSA PRIVATE KEY" {
+	if block == nil {
 		return nil, fmt.Errorf("密钥对格式错误，为%s", block.Type)
 	}
-	return x509.ParsePKCS1PrivateKey(block.Bytes)
+	privateKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err == nil {
+		return privateKey, nil
+	}
+	pkcs8PrivateKey, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	switch pri := pkcs8PrivateKey.(type) {
+	case *rsa.PrivateKey:
+		return pri, nil
+	}
+	return nil, fmt.Errorf("无法解析RSA公钥: %v", err)
 }
 
 // 解析csr
@@ -499,22 +559,21 @@ func conveyCertificateRequestToCertificate(certificateRequest *x509.CertificateR
 		SignatureAlgorithm:          certificateRequest.SignatureAlgorithm,
 		PublicKeyAlgorithm:          certificateRequest.PublicKeyAlgorithm,
 		PublicKey:                   certificateRequest.PublicKey,
-		Version:                     certificateRequest.Version,
+		Version:                     3,
 		SerialNumber:                nil,
 		Issuer:                      pkix.Name{},
 		Subject:                     certificateRequest.Subject,
 		NotBefore:                   time.Time{},
 		NotAfter:                    time.Time{},
-		KeyUsage:                    x509.KeyUsageCertSign | x509.KeyUsageCRLSign, //
+		KeyUsage:                    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		Extensions:                  certificateRequest.Extensions,
-		ExtraExtensions:             certificateRequest.ExtraExtensions,
+		ExtKeyUsage:                 []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		UnhandledCriticalExtensions: nil,
-		ExtKeyUsage:                 nil,
 		UnknownExtKeyUsage:          nil,
-		BasicConstraintsValid:       true, //
-		IsCA:                        true, //
-		MaxPathLen:                  0,    //
-		MaxPathLenZero:              true,
+		BasicConstraintsValid:       true,  //
+		IsCA:                        false, //
+		MaxPathLen:                  0,     //
+		MaxPathLenZero:              false,
 		SubjectKeyId:                nil,
 		AuthorityKeyId:              nil,
 		OCSPServer:                  nil,
@@ -536,6 +595,45 @@ func conveyCertificateRequestToCertificate(certificateRequest *x509.CertificateR
 		PolicyIdentifiers:           nil,
 	}
 	return &certificate
+}
+
+// 调用用户的公钥
+
+func GetPublicKey(ctx contractapi.TransactionContextInterface, id string) (*rsa.PublicKey, error) {
+	args := [][]byte{[]byte("GetPublicKey"), []byte(id)}
+	response := ctx.GetStub().InvokeChaincode("user", args, "")
+	log.Printf("获取的公钥数据:%s", response.Payload)
+	return parseRSAPubKey(string(response.GetPayload()))
+}
+func parseRSAPubKey(bytes string) (*rsa.PublicKey, error) {
+	block, _ := pem.Decode([]byte(bytes))
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode PEM block containing PUBLIC KEY")
+	}
+	//pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	//if err != nil {
+	//	return nil, err
+	//}
+	//switch pub := pub.(type) {
+	//case *rsa.PublicKey:
+	//	return pub, nil
+	//default:
+	//	return nil, fmt.Errorf("此公钥非RSA公钥")
+	//}
+	publicKey, err := x509.ParsePKCS1PublicKey(block.Bytes)
+	if err == nil {
+		return publicKey, nil
+	}
+	// 解析格式
+	key, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	switch pub := key.(type) {
+	case *rsa.PublicKey:
+		return pub, nil
+	}
+	return nil, fmt.Errorf("无法解析RSA公钥: %v", err)
 }
 
 func main() {

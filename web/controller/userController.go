@@ -102,22 +102,13 @@ func RegisterByGenRSA(c *gin.Context) {
 	return
 }
 
-// 用户登录 必须附带签名（目前不需要签名)
+// 用户登录
 
 func Login(c *gin.Context) {
 	id := c.PostForm("id")
 	password := c.PostForm("password")
 	var err error = nil
 	var bytes []byte = nil
-	// 单文件
-	//file, _ := c.FormFile("sign")
-	//bytes, err := getFile(file)
-	//if err != nil {
-	//	c.JSON(http.StatusBadRequest,
-	//		model.BaseResponseInstance.FailMsg(config.FileParseFalse),
-	//	)
-	//	return
-	//}
 	//先判空
 	if id == "" || password == "" {
 		c.JSON(http.StatusBadRequest,

@@ -1,12 +1,17 @@
 package controller
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"web/config"
 	"web/model"
 	"web/service"
@@ -77,7 +82,7 @@ func RegisterCsr(c *gin.Context) {
 
 func RegisterIntermediateCert(c *gin.Context) {
 	csr, err := c.FormFile("csr")
-	pub, err := c.FormFile("pub")
+	//pub, err := c.FormFile("pub")
 	if err != nil {
 		c.JSON(http.StatusOK,
 			model.BaseResponseInstance.FailMsg(config.FileUploadFalse),
@@ -85,7 +90,6 @@ func RegisterIntermediateCert(c *gin.Context) {
 		return
 	}
 	csrFile, err := csr.Open()
-	pubFile, err := pub.Open()
 	if err != nil {
 		c.JSON(http.StatusBadRequest,
 			model.BaseResponseInstance.FailMsg(config.FileParseFalse),
@@ -93,8 +97,8 @@ func RegisterIntermediateCert(c *gin.Context) {
 		return
 	}
 	csrBytes, _ := io.ReadAll(csrFile)
-	pubBytes, _ := io.ReadAll(pubFile)
-	bytes, err := service.IntermediateCertRegisterService(string(csrBytes), string(pubBytes))
+	//pubBytes, _ := io.ReadAll(pubFile)
+	bytes, err := service.IntermediateCertRegisterService(string(csrBytes), c.PostForm("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
 		return
@@ -139,7 +143,15 @@ func ApproveCert(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(config.RequestFail))
 		return
 	}
-	bytes, err := service.ApproveCertService(id)
+	// 获取中间证书的私钥
+	pri, err := c.FormFile("pri")
+	csrFile, err := pri.Open()
+	priBytes, err := io.ReadAll(csrFile)
+	if c.PostForm("userId") == "" || c.PostForm("issuerId") == "" || c.PostForm("interId") == "" {
+		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(config.RequestParameterIsNull))
+		return
+	}
+	bytes, err := service.ApproveCertService(id, c.PostForm("userId"), c.PostForm("issuerId"), c.PostForm("interId"), string(priBytes))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
 		return
@@ -278,4 +290,23 @@ func MyCert(c *gin.Context) {
 	}
 	return
 
+}
+
+//
+
+func GenRSA(c *gin.Context) {
+	bit, _ := strconv.Atoi(c.PostForm("bit"))
+	key, err := rsa.GenerateKey(rand.Reader, bit)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, model.BaseResponseInstance.FailMsg(err.Error()))
+		return
+	}
+	// pem编码
+	marshalPKCS1PrivateKey := x509.MarshalPKCS1PrivateKey(key)
+	memoryPrivateKey := pem.EncodeToMemory(&pem.Block{
+		Type:    "RSA PRIVATE KEY",
+		Headers: nil,
+		Bytes:   marshalPKCS1PrivateKey,
+	})
+	c.JSON(http.StatusOK, model.BaseResponseInstance.SuccessData(memoryPrivateKey))
 }

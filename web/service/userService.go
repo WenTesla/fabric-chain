@@ -223,7 +223,7 @@ func LoadPublicKey(file []byte) (*rsa.PublicKey, error) {
 	if publicKeyBlock == nil || publicKeyBlock.Type != "RSA PUBLIC KEY" {
 		return nil, fmt.Errorf("无法解析PEM格式的公钥文件%s", publicKeyBlock.Type)
 	}
-	// 解析RSA私钥
+	// 解析RSA公钥
 	publicKey, err := x509.ParsePKCS1PublicKey(publicKeyBlock.Bytes)
 	// 成功直接返回
 	if err == nil {

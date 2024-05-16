@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
@@ -20,13 +22,75 @@ type RootCAContract struct {
 	contractapi.Contract
 }
 
-// 私钥
+// 中间证书
 
-var keyBytes = []byte("-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA0pR3EYb61Oo5f+f1Djmnv6TzApqjnUFsiF89HrTia6QtFt/7\nYdCrbbg23a3MY5qrkHJPNvR4wJ8QXhjmUNd604xdV8HnHO2e139Pg7pu2ZGDFHiV\nrAu2YvirzzAnZpTzPK5hdQ0LjHTsvyV2Qa3orCxbjetHqgfnmKJgZPbO7vW+bGUJ\n9Jy57oZ5lD9ZsNehOYCYEA0bs2XaC9BSV11lCNXKmzbLPvQnRA0wB0a9z96Qn7gm\nmL7qm49TKfbJoCxvX7ytCFQBhlgBCsgXOjTmkGHT75Naeg6GXgghY1ceK5JdH+Fo\nOoixAYljQGum0T2QtEBTR7rh4PqRipAmzd8hQwIDAQABAoIBAQCK/OL59pVoIpCB\nE6BzGyrVGxIqDdcf3Ca+e93jfpBTa7E2/+7zyL7dVFEiT6wvsc67MDeIliN9P3+W\nG+koQpEXP/X8Dkd0mIHWyni5ATxY7eoOgOiI/dIL0QXVYnsfAgDpdE9u6oVM13/L\nSfabsyV3Pm/PZBOQ7la2L7Zf7Wb34JigiZot7j6f5SxCgf+zTL7yC1nuph5OO8dP\nQFndf4ZTaKf4XepRLnkTqsf4AGIGrIcL4jvaf+7t5WAInILvnzaAwq/8QGnwwGYh\nzFsyq+ApYyeKlR5DWdYNEKr6/brAa96ehya4xJe4senCbFbz4xKdtNlHFq+YuN+h\nI/pBKY2BAoGBAOtpALgHpWHHsRFfILXUURMt9Dzt9dp5t9SwHQrZNFkrAMjb/tg9\ntVaa/tcgtt5RV+qsPO0Qn9hoKD0HQ96OZQ8mI4OjWG0ab8PVNNDDdo3qh+fcdSr6\nmbqCWflUeFD9KIyg1/3l74i+edsasfu87D0bve9hsnAs3ryV+C1M6iiJAoGBAOT/\nfw3wg77nUfMrhMy8rskj3ttJe4Ed4BSJ0T4hixPNpU8y8dx5Ny3TH7Olgag/O55H\nUtcSQTL6IsdE2xgSMTSSdbHyWwpCRrN3d1veuI2k7ptc8zzYwBF2mqZO7OBqLBS1\nKp8G7mCSi4Q9RHqMYA9dkRLRoIcDRLybj8+ekrBrAoGAOKruIV610PPhC+16Ukrp\nuVQ2lvQxWoYyWmCKnTHsCAryBWfv0N4J6O8mqWKWoq2yHCuZ/vchg1aPWSGGlOxy\nJ1Nm+Sk5AAp9HQcVz6s9vqvWS1omWlI470yxm/NZgyVtvWx6kgPnxWMUskmazp6L\nv6oN7rH14krq0zrGoyEAvQECgYAcrFkuV6VHbBN4zUQtlpqUGOe4sXTDcAg0yiTn\nELAnZKKETi62mn7sP/lCN0EK3hAK+4dF4sVDKsrcBKUiWHTMzmHqTBxWJoJPym+p\nkzOsmLA/x921CrbR+PXYSR2j4+dtGFoj22xRr0fE4R8H8Te99MtLffAJt8ENlLTn\nHEXlzQKBgQCsCSkBXa4YF2k3Alsc3skTgK/KAvYr3bDBjoSGY+xrYJ7oipIeTbv6\n+fYxIUrsiUgeRYPl7UxVKwtg0kJByVy3oEMMS7Csb5D6oUbormUjeVclAYoTatj7\nj6p0JvXqXopuBchK2uazTT5beCPzCGy6NrmxRcrTHAeGNXi79cxTzw==\n-----END RSA PRIVATE KEY-----\n")
+type inter struct {
+	Key  string `json:"key"`  // 密钥
+	Cert string `json:"cert"` // 证书
+}
+
+type CertInfo struct {
+	Id        string `json:"id"`
+	HashValue string `json:"hashValue"`
+	Content   string `json:"content"`
+	IssuerID  string `json:"issuerID"`
+}
+
+// 根私钥
+
+var keyBytes = []byte(`-----BEGIN RSA PRIVATE KEY-----
+MIIEpAIBAAKCAQEA0pR3EYb61Oo5f+f1Djmnv6TzApqjnUFsiF89HrTia6QtFt/7
+YdCrbbg23a3MY5qrkHJPNvR4wJ8QXhjmUNd604xdV8HnHO2e139Pg7pu2ZGDFHiV
+rAu2YvirzzAnZpTzPK5hdQ0LjHTsvyV2Qa3orCxbjetHqgfnmKJgZPbO7vW+bGUJ
+9Jy57oZ5lD9ZsNehOYCYEA0bs2XaC9BSV11lCNXKmzbLPvQnRA0wB0a9z96Qn7gm
+mL7qm49TKfbJoCxvX7ytCFQBhlgBCsgXOjTmkGHT75Naeg6GXgghY1ceK5JdH+Fo
+OoixAYljQGum0T2QtEBTR7rh4PqRipAmzd8hQwIDAQABAoIBAQCK/OL59pVoIpCB
+E6BzGyrVGxIqDdcf3Ca+e93jfpBTa7E2/+7zyL7dVFEiT6wvsc67MDeIliN9P3+W
+G+koQpEXP/X8Dkd0mIHWyni5ATxY7eoOgOiI/dIL0QXVYnsfAgDpdE9u6oVM13/L
+SfabsyV3Pm/PZBOQ7la2L7Zf7Wb34JigiZot7j6f5SxCgf+zTL7yC1nuph5OO8dP
+QFndf4ZTaKf4XepRLnkTqsf4AGIGrIcL4jvaf+7t5WAInILvnzaAwq/8QGnwwGYh
+zFsyq+ApYyeKlR5DWdYNEKr6/brAa96ehya4xJe4senCbFbz4xKdtNlHFq+YuN+h
+I/pBKY2BAoGBAOtpALgHpWHHsRFfILXUURMt9Dzt9dp5t9SwHQrZNFkrAMjb/tg9
+tVaa/tcgtt5RV+qsPO0Qn9hoKD0HQ96OZQ8mI4OjWG0ab8PVNNDDdo3qh+fcdSr6
+mbqCWflUeFD9KIyg1/3l74i+edsasfu87D0bve9hsnAs3ryV+C1M6iiJAoGBAOT/
+fw3wg77nUfMrhMy8rskj3ttJe4Ed4BSJ0T4hixPNpU8y8dx5Ny3TH7Olgag/O55H
+UtcSQTL6IsdE2xgSMTSSdbHyWwpCRrN3d1veuI2k7ptc8zzYwBF2mqZO7OBqLBS1
+Kp8G7mCSi4Q9RHqMYA9dkRLRoIcDRLybj8+ekrBrAoGAOKruIV610PPhC+16Ukrp
+uVQ2lvQxWoYyWmCKnTHsCAryBWfv0N4J6O8mqWKWoq2yHCuZ/vchg1aPWSGGlOxy
+J1Nm+Sk5AAp9HQcVz6s9vqvWS1omWlI470yxm/NZgyVtvWx6kgPnxWMUskmazp6L
+v6oN7rH14krq0zrGoyEAvQECgYAcrFkuV6VHbBN4zUQtlpqUGOe4sXTDcAg0yiTn
+ELAnZKKETi62mn7sP/lCN0EK3hAK+4dF4sVDKsrcBKUiWHTMzmHqTBxWJoJPym+p
+kzOsmLA/x921CrbR+PXYSR2j4+dtGFoj22xRr0fE4R8H8Te99MtLffAJt8ENlLTn
+HEXlzQKBgQCsCSkBXa4YF2k3Alsc3skTgK/KAvYr3bDBjoSGY+xrYJ7oipIeTbv6
++fYxIUrsiUgeRYPl7UxVKwtg0kJByVy3oEMMS7Csb5D6oUbormUjeVclAYoTatj7
+j6p0JvXqXopuBchK2uazTT5beCPzCGy6NrmxRcrTHAeGNXi79cxTzw==
+-----END RSA PRIVATE KEY-----
+`)
 
 // 根证书
 
-var rootCertBytes = []byte("-----BEGIN CERTIFICATE-----\nMIIDbzCCAlcCFD/oOgfjWvIj8iIwRumGUXK9yjy3MA0GCSqGSIb3DQEBCwUAMHQx\nCzAJBgNVBAYTAkNOMQ4wDAYDVQQIDAVIVUJFSTELMAkGA1UEBwwCWFkxDTALBgNV\nBAoMBENBVUMxDTALBgNVBAsMBENBVUMxDjAMBgNVBAMMBWJvd2VuMRowGAYJKoZI\nhvcNAQkBFgsxMjNAMTYzLmNvbTAeFw0yNDAxMDEwNDEyMThaFw0zMzEyMjkwNDEy\nMThaMHQxCzAJBgNVBAYTAkNOMQ4wDAYDVQQIDAVIVUJFSTELMAkGA1UEBwwCWFkx\nDTALBgNVBAoMBENBVUMxDTALBgNVBAsMBENBVUMxDjAMBgNVBAMMBWJvd2VuMRow\nGAYJKoZIhvcNAQkBFgsxMjNAMTYzLmNvbTCCASIwDQYJKoZIhvcNAQEBBQADggEP\nADCCAQoCggEBANKUdxGG+tTqOX/n9Q45p7+k8wKao51BbIhfPR604mukLRbf+2HQ\nq224Nt2tzGOaq5ByTzb0eMCfEF4Y5lDXetOMXVfB5xztntd/T4O6btmRgxR4lawL\ntmL4q88wJ2aU8zyuYXUNC4x07L8ldkGt6KwsW43rR6oH55iiYGT2zu71vmxlCfSc\nue6GeZQ/WbDXoTmAmBANG7Nl2gvQUlddZQjVyps2yz70J0QNMAdGvc/ekJ+4Jpi+\n6puPUyn2yaAsb1+8rQhUAYZYAQrIFzo05pBh0++TWnoOhl4IIWNXHiuSXR/haDqI\nsQGJY0BrptE9kLRAU0e64eD6kYqQJs3fIUMCAwEAATANBgkqhkiG9w0BAQsFAAOC\nAQEAbdG7dk0WVDXrcKbp5B1hyMGI4qmHcwwFpr5nJup5PeNY0yJAcIDahuB4Lilg\ndD1ZBjvNmYb1rn3Ynfo6PHTIwS20wbSIle5bbldyJC0qhdcyIzYNlg9hG5sT/qPd\ntkfRxlmIGLB/iCPdQcTJBrnYzX0iRbikQz6U+IxERhfhMUBLAleG02lmknyOr7Fm\n794NOlz+IDF03aRvrrNcYZSezlTyOkEAJFy6LitgMPE3/+VTJFWaBqaqT0p3UZNX\nxrLwbE0TOeOZNO40rC1yG2FlpHYvRWvGCKaLNRRG+jxWmE7PUuhKNCFM1PxrihkH\ny4Cpwt/jYOk/vmhDvxEj2Thr7g==\n-----END CERTIFICATE-----\n")
+var rootCertBytes = []byte(`-----BEGIN CERTIFICATE-----
+MIIDbzCCAlcCFD/oOgfjWvIj8iIwRumGUXK9yjy3MA0GCSqGSIb3DQEBCwUAMHQx
+CzAJBgNVBAYTAkNOMQ4wDAYDVQQIDAVIVUJFSTELMAkGA1UEBwwCWFkxDTALBgNV
+BAoMBENBVUMxDTALBgNVBAsMBENBVUMxDjAMBgNVBAMMBWJvd2VuMRowGAYJKoZI
+hvcNAQkBFgsxMjNAMTYzLmNvbTAeFw0yNDAxMDEwNDEyMThaFw0zMzEyMjkwNDEy
+MThaMHQxCzAJBgNVBAYTAkNOMQ4wDAYDVQQIDAVIVUJFSTELMAkGA1UEBwwCWFkx
+DTALBgNVBAoMBENBVUMxDTALBgNVBAsMBENBVUMxDjAMBgNVBAMMBWJvd2VuMRow
+GAYJKoZIhvcNAQkBFgsxMjNAMTYzLmNvbTCCASIwDQYJKoZIhvcNAQEBBQADggEP
+ADCCAQoCggEBANKUdxGG+tTqOX/n9Q45p7+k8wKao51BbIhfPR604mukLRbf+2HQ
+q224Nt2tzGOaq5ByTzb0eMCfEF4Y5lDXetOMXVfB5xztntd/T4O6btmRgxR4lawL
+tmL4q88wJ2aU8zyuYXUNC4x07L8ldkGt6KwsW43rR6oH55iiYGT2zu71vmxlCfSc
+ue6GeZQ/WbDXoTmAmBANG7Nl2gvQUlddZQjVyps2yz70J0QNMAdGvc/ekJ+4Jpi+
+6puPUyn2yaAsb1+8rQhUAYZYAQrIFzo05pBh0++TWnoOhl4IIWNXHiuSXR/haDqI
+sQGJY0BrptE9kLRAU0e64eD6kYqQJs3fIUMCAwEAATANBgkqhkiG9w0BAQsFAAOC
+AQEAbdG7dk0WVDXrcKbp5B1hyMGI4qmHcwwFpr5nJup5PeNY0yJAcIDahuB4Lilg
+dD1ZBjvNmYb1rn3Ynfo6PHTIwS20wbSIle5bbldyJC0qhdcyIzYNlg9hG5sT/qPd
+tkfRxlmIGLB/iCPdQcTJBrnYzX0iRbikQz6U+IxERhfhMUBLAleG02lmknyOr7Fm
+794NOlz+IDF03aRvrrNcYZSezlTyOkEAJFy6LitgMPE3/+VTJFWaBqaqT0p3UZNX
+xrLwbE0TOeOZNO40rC1yG2FlpHYvRWvGCKaLNRRG+jxWmE7PUuhKNCFM1PxrihkH
+y4Cpwt/jYOk/vmhDvxEj2Thr7g==
+-----END CERTIFICATE-----
+`)
 
 // 根证书模板
 
@@ -47,6 +111,27 @@ var rootCsr = x509.Certificate{
 	MaxPathLen:            1,    // 表示证书链中可在此证书之后的非自颁发中级证书的最大层级，我们只需要1个中级证书就可以了，根证书设置为1，中级证书设置为0，那么中级证书就不能继续签署中级证书了。-1 表示未设置，且MaxPathLenZero == false && MaxPathLen == 0视为-1
 	MaxPathLenZero:        false,
 	KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign, //支持签发和吊销中级证书
+}
+
+// 中间证书模板
+var interCsr = &x509.Certificate{
+	Version:      3,
+	SerialNumber: big.NewInt(2024),
+	Subject: pkix.Name{
+		Country:            []string{"CN"},
+		Province:           []string{"TJ"},
+		Locality:           []string{"Shanghai"},
+		Organization:       []string{"JediLtd"},
+		OrganizationalUnit: []string{"JediProxy"},
+		CommonName:         "Inter CA",
+	},
+	NotBefore:             time.Date(2024, time.January, 1, 0, 0, 0, 0, time.UTC),
+	NotAfter:              time.Date(2025, time.January, 1, 0, 0, 0, 0, time.UTC),
+	BasicConstraintsValid: true,
+	IsCA:                  true,
+	MaxPathLen:            0,
+	MaxPathLenZero:        true,
+	KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 }
 
 // 根证书和密钥是否匹配
@@ -80,21 +165,30 @@ func parseKey(bytes []byte) (*rsa.PrivateKey, error) {
 	return x509.ParsePKCS1PrivateKey(block.Bytes)
 }
 
-// 颁发中间证书(pem编码)
+// 颁发中间证书(pem编码) csr包含 直接颁发 同时检测HASH值，防止重复上传
 
-func (s *RootCAContract) IssueIntermediateCert(ctx contractapi.TransactionContextInterface, csrBytes string, pubBytes string) (string, error) {
+func (s *RootCAContract) IssueIntermediateCert(ctx contractapi.TransactionContextInterface, csrBytes, pri string) (string, error) {
 	log.Println("开始执行IssueIntermediateCert")
 	// 加载根证书的私钥
 	RootKey, err := parseKey(keyBytes)
 	if err != nil {
 		return "", fmt.Errorf("私钥加载失败")
 	}
-	// 解析RSA公钥
-	pub, err := parseRSAPubKey(pubBytes)
+	// 解析私钥
+	//key, err := parseKey([]byte(pri))
+	//if err != nil {
+	//	return "", fmt.Errorf("私钥加载失败%v",err)
+	//}
+	//// 解析RSA公钥
+	//pub, err := parseRSAPubKey(userId)
+	//if err != nil {
+	//	return "", fmt.Errorf("解析公钥失败%v", err)
+	//}
+	//pub, err := GetPublicKey(ctx, userId)
 	if err != nil {
 		return "", fmt.Errorf("解析公钥失败%v", err)
 	}
-	log.Printf("pub:%v\n", *pub)
+	//log.Printf("pub:%v", *pub)
 	// 解析csr请求
 	certificateRequest, err := parseCertificateRequest(csrBytes)
 	if err != nil {
@@ -115,7 +209,7 @@ func (s *RootCAContract) IssueIntermediateCert(ctx contractapi.TransactionContex
 		rand.Reader,
 		&certificate,
 		&rootCsr,
-		pub,
+		certificate.PublicKey,
 		RootKey,
 	)
 	if err != nil {
@@ -128,8 +222,20 @@ func (s *RootCAContract) IssueIntermediateCert(ctx contractapi.TransactionContex
 		Bytes:   certBytes,
 	})
 	log.Printf("pem证书为%s\n", pemBytes)
+	//
+	marshal, err := json.Marshal(CertInfo{
+		Id:        strconv.FormatInt(timestamp.GetSeconds(), 10),
+		HashValue: fmt.Sprintf("%x", sha256.Sum256([]byte(pemBytes))),
+		Content:   string(pemBytes),
+		IssuerID:  pri,
+	})
+	// 检测hash值
+	//s.checkHash(ctx,)
+	if err != nil {
+		return "", err
+	}
 	// 将证书的hash值上链
-	return string(pemBytes), ctx.GetStub().PutState(strconv.FormatInt(timestamp.GetSeconds(), 10), pemBytes)
+	return string(pemBytes), ctx.GetStub().PutState(strconv.FormatInt(timestamp.GetSeconds(), 10), marshal)
 }
 
 // 解析CSR请求(pem格式)
@@ -147,19 +253,33 @@ func parseCertificateRequest(bytes string) (*x509.CertificateRequest, error) {
 
 func parseRSAPubKey(bytes string) (*rsa.PublicKey, error) {
 	block, _ := pem.Decode([]byte(bytes))
-	if block == nil || block.Type != "PUBLIC KEY" {
+	if block == nil {
 		return nil, fmt.Errorf("failed to decode PEM block containing PUBLIC KEY")
 	}
-	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	//pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	//if err != nil {
+	//	return nil, err
+	//}
+	//switch pub := pub.(type) {
+	//case *rsa.PublicKey:
+	//	return pub, nil
+	//default:
+	//	return nil, fmt.Errorf("此公钥非RSA公钥")
+	//}
+	publicKey, err := x509.ParsePKCS1PublicKey(block.Bytes)
+	if err == nil {
+		return publicKey, nil
+	}
+	// 解析格式
+	key, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
 		return nil, err
 	}
-	switch pub := pub.(type) {
+	switch pub := key.(type) {
 	case *rsa.PublicKey:
 		return pub, nil
-	default:
-		return nil, fmt.Errorf("此公钥非RSA公钥")
 	}
+	return nil, fmt.Errorf("无法解析RSA公钥: %v", err)
 }
 
 // 将Request转为Cert
@@ -259,21 +379,23 @@ func (s *RootCAContract) RevocationCert(ctx contractapi.TransactionContextInterf
 
 // 查看所有中间证书
 
-func (s *RootCAContract) GetAllElem(ctx contractapi.TransactionContextInterface) ([]string, error) {
+func (s *RootCAContract) GetAllElem(ctx contractapi.TransactionContextInterface) ([]CertInfo, error) {
 	resultsIterator, err := ctx.GetStub().GetStateByRange("", "")
 	if err != nil {
 		return nil, err
 	}
 	defer resultsIterator.Close()
 	//
-	var certs []string
+	var certs []CertInfo
 	for resultsIterator.HasNext() {
 		kv, err := resultsIterator.Next()
 		if err != nil {
 			return nil, err
 		}
+		var cert CertInfo
+		json.Unmarshal(kv.GetValue(), &cert)
 		// 添加
-		certs = append(certs, string(kv.GetValue()))
+		certs = append(certs, cert)
 		log.Println(kv.Key + ":" + string(kv.Value))
 	}
 	return certs, nil
@@ -329,6 +451,20 @@ func (s *RootCAContract) CheckIntermediateCert(ctx contractapi.TransactionContex
 	return nil
 }
 
+// Id获取证书
+
+func (s *RootCAContract) GetCert(ctx contractapi.TransactionContextInterface, id string) (string, error) {
+	state, _ := ctx.GetStub().GetState(id)
+	var cert CertInfo
+	json.Unmarshal(state, &cert)
+	return cert.Content, nil
+}
+
+// 检测HASH值
+
+func (s *RootCAContract) checkHash(ctx contractapi.TransactionContextInterface, id string) bool {
+	return false
+}
 func main() {
 	log.Println("============start chaincode ============")
 	if InitLedger() != nil {

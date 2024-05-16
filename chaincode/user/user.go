@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	rootCA = iota
-	inter
+	common = iota
+	auditor
+	administrator
 )
 
 // SmartContract provides functions for managing an user
@@ -78,7 +79,7 @@ func (s *SmartContract) InitLedger(ctx contractapi.TransactionContextInterface) 
 	return nil
 }
 
-//  创建用户 id password email publicKey
+//  创建用户 id password email publicKey 如果id为admin，则自动为管理员
 
 func (s *SmartContract) CreateUser(ctx contractapi.TransactionContextInterface, id, password, email, publicKey string) error {
 	exists, err := s.UserExists(ctx, id)
@@ -86,7 +87,7 @@ func (s *SmartContract) CreateUser(ctx contractapi.TransactionContextInterface, 
 		return err
 	}
 	if exists {
-		return fmt.Errorf("the user %s already exists", id)
+		return fmt.Errorf("该用户 %s 已经存在", id)
 	}
 	timestamp, err := ctx.GetStub().GetTxTimestamp()
 	if err != nil {
@@ -99,6 +100,9 @@ func (s *SmartContract) CreateUser(ctx contractapi.TransactionContextInterface, 
 		CreateTime: strconv.FormatInt(timestamp.GetSeconds(), 10),
 		UpdateTime: strconv.FormatInt(timestamp.GetSeconds(), 10),
 		PublicKey:  publicKey,
+	}
+	if id == "admin" {
+		user.IsCA = administrator
 	}
 	// 用户为
 	log.Printf("用户为\n%v\n", user)
@@ -174,7 +178,7 @@ func (s *SmartContract) UpdateUser(ctx contractapi.TransactionContextInterface, 
 		return err
 	}
 	if !exists {
-		return fmt.Errorf("the user %s does not exist", id)
+		return fmt.Errorf("此用户 %s 不存在", id)
 	}
 	// overwriting original user with new user
 	var user = Users{ID: id, Password: fmt.Sprintf("%x", sha256.Sum256([]byte(password))), Email: email}
@@ -232,36 +236,6 @@ func (s *SmartContract) UpdatePassword(ctx contractapi.TransactionContextInterfa
 		return err
 	}
 	return ctx.GetStub().PutState(id, userJSON)
-}
-
-// 创建CA用户 -Id,Password,email
-
-func (s *SmartContract) CreateCAUser(ctx contractapi.TransactionContextInterface, args ...string) error {
-	// 判断是否有重复id
-	exist, err := s.UserExists(ctx, args[0])
-	if exist {
-		return err
-	}
-	timestamp, err := ctx.GetStub().GetTxTimestamp()
-	if err != nil {
-		return err
-	}
-	// 创建用户
-	user := Users{
-		ID:         args[0],
-		Password:   fmt.Sprintf("%x", sha256.Sum256([]byte(args[1]))),
-		Email:      args[2],
-		IsCA:       1,
-		CreateTime: strconv.FormatInt(timestamp.GetSeconds(), 10),
-		UpdateTime: strconv.FormatInt(timestamp.GetSeconds(), 10),
-		PublicKey:  "",
-		Status:     0,
-	}
-	bytes, err := json.Marshal(user)
-	if err != nil {
-		return err
-	}
-	return ctx.GetStub().PutState(args[0], bytes)
 }
 
 // 根据用户Id禁用用户
@@ -425,6 +399,14 @@ func (s *SmartContract) UserRole(ctx contractapi.TransactionContextInterface, id
 	json.Unmarshal(bytes, &user)
 	return user.IsCA, nil
 }
+
+// 获取用户的公钥
+
+func (s *SmartContract) GetPublicKey(ctx contractapi.TransactionContextInterface, id string) string {
+	user, _ := s.ReadUser(ctx, id)
+	return user.PublicKey
+}
+
 func main() {
 	userChaincode, err := contractapi.NewChaincode(&SmartContract{})
 	if err != nil {
