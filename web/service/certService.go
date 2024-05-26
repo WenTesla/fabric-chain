@@ -79,7 +79,7 @@ func VerityCertService(cert string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("证书错误%v", handleError(err))
 	}
-	if string(bytes) != "True" {
+	if string(bytes) != "true" {
 		return false, fmt.Errorf("该证书不在区块链上")
 	}
 	return true, nil

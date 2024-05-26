@@ -457,6 +457,7 @@ func (s *RootCAContract) GetCert(ctx contractapi.TransactionContextInterface, id
 	state, _ := ctx.GetStub().GetState(id)
 	var cert CertInfo
 	json.Unmarshal(state, &cert)
+	log.Printf("GetCert已被调用")
 	return cert.Content, nil
 }
 

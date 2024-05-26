@@ -79,6 +79,13 @@ type CertInfo struct {
 	IssuerId string `json:"issuerId"`
 }
 
+type HistoryQueryResult struct {
+	Record    *CertInfo `json:"cert"`
+	TxId      string    `json:"txId"`
+	Timestamp time.Time `json:"timestamp"`
+	IsDelete  bool      `json:"isDelete"`
+}
+
 // 状态
 const (
 	reviewing = iota // 审核中
@@ -135,7 +142,10 @@ func (I *IntermediateCAContract) RequestCert(ctx contractapi.TransactionContextI
 		return 0, fmt.Errorf("该用户Id不在区块链%s\n错误:%v", userId, err)
 	}
 	request, err := pareCsr([]byte(csr))
-	fmt.Sprintf("%s", request.Subject)
+	if err != nil {
+		return 0, err
+	}
+	fmt.Sprintf("subject:%s", request.Subject)
 	if err != nil {
 		return 0, err
 	}
@@ -253,16 +263,15 @@ func (*IntermediateCAContract) CertExists(ctx contractapi.TransactionContextInte
 // 颁发证书 需要中间证书的私钥
 
 func (I *IntermediateCAContract) IssuerCert(ctx contractapi.TransactionContextInterface, id, userId, issuerId, InterCertId, pri string) error {
-	// 错误判断
-
 	// 提取中间证书
 	certBytes, _ := I.ReadIntermediateCert(ctx, InterCertId)
+	log.Printf("x509的内容:%v", certBytes)
 	// 解析中间证书
 	x509Cert, err := parseX509Cert(certBytes)
 	if err != nil {
 		return fmt.Errorf("解析中间失败%v", err)
 	}
-	log.Printf("x509Cert的颁发者:%v", x509Cert.Issuer)
+	log.Printf("x509Cert的颁发者:%s", x509Cert.Issuer)
 	// 提取中间证书对应的私钥
 	publicKey, err := GetPublicKey(ctx, userId)
 	if err != nil {
@@ -320,11 +329,12 @@ func (I *IntermediateCAContract) IssuerCert(ctx contractapi.TransactionContextIn
 	cert.CertId = strconv.FormatInt(timestamp.GetSeconds(), 10)
 	cert.Status = approved
 	cert.Bytes = string(pemBytes)
-	cert.CertHashValue = fmt.Sprintf("%x", sha256.Sum256(certBytes))
+	cert.CertHashValue = fmt.Sprintf("%x", sha256.Sum256(pemBytes))
 	cert.BeginDate = timestamp.AsTime()
 	cert.EndDate = timestamp.AsTime().AddDate(1, 0, 0)
-	cert.Issuer = x509Cert.Issuer
+	cert.Issuer = x509Cert.Subject
 	cert.IssuerId = issuerId
+	cert.Version = certificate.Version
 	marshal, _ := json.Marshal(cert)
 	// 删除证书Id
 	ctx.GetStub().DelState(id)
@@ -360,10 +370,10 @@ func (I *IntermediateCAContract) GetAllCerts(ctx contractapi.TransactionContextI
 			Status:        cert.Status,
 			IssuerId:      cert.IssuerId,
 		}
-		log.Printf("certInfo:%v\n", certInfo)
+		//log.Printf("certInfo:%v\n", certInfo)
 		certs = append(certs, certInfo)
 	}
-	log.Printf("返回certs对象:%v", certs)
+	//log.Printf("返回certs对象:%v", certs)
 	return certs, nil
 }
 
@@ -377,7 +387,7 @@ func (I *IntermediateCAContract) RevokeCert(ctx contractapi.TransactionContextIn
 	}
 	var cert Certs
 	if err = json.Unmarshal(state, &cert); err != nil {
-		return err
+		return fmt.Errorf("json反序列化失败: %v", err)
 	}
 	cert.Status = revoked
 	state, _ = json.Marshal(cert)
@@ -388,29 +398,7 @@ func (I *IntermediateCAContract) RevokeCert(ctx contractapi.TransactionContextIn
 // 删除证书
 
 func (I *IntermediateCAContract) Delete(ctx contractapi.TransactionContextInterface, id string) error {
-	return ctx.GetStub().DelState(id)
-}
-
-// 根据证书ID下载证书原件
-
-func (I *IntermediateCAContract) DownloadCert(ctx contractapi.TransactionContextInterface, id string) (string, error) {
-	state, err := ctx.GetStub().GetState(id)
-	if err != nil {
-		return "", err
-	}
-	var cert = Certs{}
-	if err = json.Unmarshal(state, &cert); err != nil {
-		return "", fmt.Errorf("json 序列化失败%v", err)
-	}
-	if cert.Status != approved {
-		return "", fmt.Errorf("该证书未审核通过")
-	}
-	return string(cert.Bytes), nil
-}
-
-// 拒绝证书 证书的Id
-
-func RejectCert(ctx contractapi.TransactionContextInterface, id string) error {
+	log.Printf("证书的id为%s", id)
 	return ctx.GetStub().DelState(id)
 }
 
@@ -432,9 +420,15 @@ func (I *IntermediateCAContract) VerityCert(ctx contractapi.TransactionContextIn
 		if cert.Status == revoked {
 			return "false", fmt.Errorf("该证书已被撤销")
 		}
-		log.Printf("cert:%s", cert.Bytes)
-		log.Printf("Bytes:%s", certBytes)
+		if cert.Status == rejected {
+			return "false", fmt.Errorf("该证书已拒绝")
+		}
 		log.Printf("%s", bytes.Equal([]byte(certBytes), []byte(cert.Bytes)))
+		if certBytes == cert.Bytes {
+			log.Printf("cert:%s", cert.Bytes)
+			log.Printf("Bytes:%s", certBytes)
+			return "true", nil
+		}
 		// 比较hash值
 		if cert.CertHashValue == fmt.Sprintf("%x", sha256.Sum256([]byte(certBytes))) {
 			log.Printf("该证书在区块链上%s", cert.CertId)
@@ -443,7 +437,7 @@ func (I *IntermediateCAContract) VerityCert(ctx contractapi.TransactionContextIn
 		// 比较Id
 
 	}
-	return "true", nil
+	return "false", fmt.Errorf("该证书不在区块链上！")
 }
 
 // 查看该用户id对应的证书
@@ -504,6 +498,39 @@ func (I *IntermediateCAContract) CertInfoByUserId(ctx contractapi.TransactionCon
 	return certs, nil
 }
 
+// 查看某个证书的历史
+
+func (I *IntermediateCAContract) CertHistory(ctx contractapi.TransactionContextInterface, id string) ([]HistoryQueryResult, error) {
+	resultsIterator, _ := ctx.GetStub().GetHistoryForKey(id)
+	defer resultsIterator.Close()
+	var records []HistoryQueryResult
+	for resultsIterator.HasNext() {
+		response, err := resultsIterator.Next()
+		if err != nil {
+			return nil, err
+		}
+		var cert CertInfo
+		if len(response.Value) > 0 {
+			err = json.Unmarshal(response.Value, &cert)
+			if err != nil {
+				return nil, err
+			}
+		}
+		timestamp := response.Timestamp.AsTime()
+		if err != nil {
+			return nil, err
+		}
+		record := HistoryQueryResult{
+			TxId:      response.TxId,
+			Timestamp: timestamp,
+			Record:    &cert,
+			IsDelete:  response.IsDelete,
+		}
+		records = append(records, record)
+	}
+	return records, nil
+}
+
 // 加载x509证书
 
 func parseX509Cert(bytes []byte) (*x509.Certificate, error) {
@@ -541,7 +568,7 @@ func parsePrivateKey(bytes []byte) (*rsa.PrivateKey, error) {
 func pareCsr(bytes []byte) (*x509.CertificateRequest, error) {
 	block, _ := pem.Decode(bytes)
 	if block == nil || block.Type != "CERTIFICATE REQUEST" {
-		return nil, fmt.Errorf("csr解析错误，为%s", block.Type)
+		return nil, fmt.Errorf("csr解析错误，类型为%s", block.Type)
 	}
 	return x509.ParseCertificateRequest(block.Bytes)
 }
@@ -610,16 +637,6 @@ func parseRSAPubKey(bytes string) (*rsa.PublicKey, error) {
 	if block == nil {
 		return nil, fmt.Errorf("failed to decode PEM block containing PUBLIC KEY")
 	}
-	//pub, err := x509.ParsePKIXPublicKey(block.Bytes)
-	//if err != nil {
-	//	return nil, err
-	//}
-	//switch pub := pub.(type) {
-	//case *rsa.PublicKey:
-	//	return pub, nil
-	//default:
-	//	return nil, fmt.Errorf("此公钥非RSA公钥")
-	//}
 	publicKey, err := x509.ParsePKCS1PublicKey(block.Bytes)
 	if err == nil {
 		return publicKey, nil

@@ -23,12 +23,12 @@ func RegisterCsr(c *gin.Context) {
 	form := struct {
 		C            string `form:"C" binding:"required"`
 		ST           string `form:"ST"`
-		L            string `form:"l"`
-		O            string `form:"o"`
+		L            string `form:"L"`
+		O            string `form:"O"`
 		OU           string `form:"OU"`
 		CN           string `form:"CN"`
-		EmailAddress string `form:"emailAddress"`
-		DnsEmail     string `form:"Dns"`
+		EmailAddress string `form:"EmailAddress"`
+		DnsEmail     string `form:"DNSAddress"`
 	}{}
 	if c.ShouldBind(&form) != nil {
 		c.JSON(http.StatusUnauthorized,
@@ -308,5 +308,5 @@ func GenRSA(c *gin.Context) {
 		Headers: nil,
 		Bytes:   marshalPKCS1PrivateKey,
 	})
-	c.JSON(http.StatusOK, model.BaseResponseInstance.SuccessData(memoryPrivateKey))
+	c.JSON(http.StatusOK, model.BaseResponseInstance.SuccessData(string(memoryPrivateKey)))
 }
